@@ -1,0 +1,32 @@
+# Build artifacts
+/src/rust/target/
+/src/rust/Cargo.lock
+
+# IDE
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Claude Code
+.claude/
+
+# OS
+Thumbs.db
+.Spotlight-V100
+.Trashes
+
+# Fuzz corpus
+/src/rust/fuzz/corpus/
+/src/rust/fuzz/artifacts/
+
+# Generated (can be regenerated)
+/src/rust/src/generated/

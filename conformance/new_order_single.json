@@ -1,0 +1,47 @@
+[
+  {
+    "test": "new_order_single_limit_buy",
+    "description": "Basic limit buy order",
+    "input": {
+      "schema_id": "0x0001",
+      "message_type": "0x01",
+      "sender_comp_id": 1,
+      "sequence_num": 1,
+      "correlation_id": 0,
+      "fields": {
+        "order_id": 42,
+        "instrument_id": 7,
+        "side": 1,
+        "order_type": 2,
+        "time_in_force": 1,
+        "price_f64": 150.25,
+        "quantity_f64": 100.0,
+        "stop_price": "NULL"
+      }
+    },
+    "expected_hex": "4d470001480000000100010001000000010000000000000000000000000000002a000000000000000700000001020100404e8f7f0300000000e40b54020000000000000000000080",
+    "expected_size": 72
+  },
+  {
+    "test": "new_order_single_market_sell",
+    "description": "Market sell order (price = NULL)",
+    "input": {
+      "schema_id": "0x0001",
+      "message_type": "0x01",
+      "sender_comp_id": 1,
+      "sequence_num": 2,
+      "correlation_id": 0,
+      "fields": {
+        "order_id": 1000,
+        "instrument_id": 42,
+        "side": 2,
+        "order_type": 1,
+        "time_in_force": 3,
+        "price_f64": "NULL",
+        "quantity_f64": 50.0,
+        "stop_price": "NULL"
+      }
+    },
+    "expected_size": 72
+  }
+]

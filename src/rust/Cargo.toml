@@ -1,0 +1,24 @@
+[package]
+name = "mgep"
+version = "0.1.0"
+edition = "2024"
+description = "MG Exchange Protocol - ultra-low-latency trading protocol"
+license = "Apache-2.0"
+
+[dependencies]
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+prost = "0.13"
+
+[[bench]]
+name = "encode_decode"
+harness = false
+
+[[bench]]
+name = "vs_protobuf"
+harness = false
+
+[[bench]]
+name = "full_stack"
+harness = false

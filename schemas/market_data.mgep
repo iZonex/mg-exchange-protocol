@@ -1,0 +1,176 @@
+# ============================================================
+# MGEP Market Data Schema
+# Order book updates, trades, statistics, subscriptions.
+# ============================================================
+
+schema market_data
+version 1
+import common
+
+# ── Order Book Updates ───────────────────────────────────
+
+message OrderAdd {
+    @type 0x01
+    "New order added to the order book."
+
+    order_id        id          required
+    instrument_id   instrument  required
+    side            Side        required
+    price           price       required
+    quantity        qty         required
+}
+
+message OrderModify {
+    @type 0x02
+    "Existing order price or quantity changed."
+
+    order_id        id          required
+    new_price       price       required
+    new_quantity    qty         required
+}
+
+message OrderDelete {
+    @type 0x03
+    "Order removed from the book."
+
+    order_id        id          required
+}
+
+message OrderExecuted {
+    @type 0x04
+    "Order (partially) filled."
+
+    order_id        id          required
+    trade_id        id          required
+    exec_price      price       required
+    exec_quantity   qty         required
+}
+
+# ── Trades ───────────────────────────────────────────────
+
+message Trade {
+    @type 0x05
+    "Trade report."
+
+    trade_id        id          required
+    instrument_id   instrument  required
+    price           price       required
+    quantity        qty         required
+    aggressor_side  Side        required
+}
+
+# ── Statistics ───────────────────────────────────────────
+
+message MarketStatistics {
+    @type 0x20
+    "OHLCV + market statistics for an instrument."
+
+    instrument_id   instrument  required
+    open_price      price
+    high_price      price
+    low_price       price
+    close_price     price
+    vwap            price
+    total_volume    qty
+    total_turnover  price
+    open_interest   qty
+
+    optional {
+        num_trades      count
+        prev_close      price
+    }
+}
+
+message TradingStatus {
+    @type 0x08
+    "Trading phase change for an instrument."
+
+    instrument_id   instrument  required
+    phase           TradingPhase required
+}
+
+# ── Subscriptions ────────────────────────────────────────
+
+enum SubscriptionType {
+    OrderByOrder    "Full depth order-by-order feed"
+    TopOfBook       "Best bid/ask only"
+    Trades          "Trade reports only"
+    Stats           "Statistics updates only"
+}
+
+message Subscribe {
+    @type 0x10
+    "Request market data for an instrument."
+
+    request_id      id          required
+    instrument_id   instrument  required
+    sub_type        SubscriptionType required
+    depth           count                   "0 = full book, N = top N levels"
+}
+
+message Unsubscribe {
+    @type 0x11
+    "Cancel a market data subscription."
+
+    request_id      id          required
+    instrument_id   instrument  required
+}
+
+message SubscribeResponse {
+    @type 0x12
+    "Response to subscription request."
+
+    request_id      id          required
+    accepted        bool        required
+    reject_reason   string      nullable
+
+    optional {
+        text            string
+    }
+}
+
+# ── Reference Data ───────────────────────────────────────
+
+message InstrumentDefinition {
+    @type 0x0B
+    "Full instrument reference data."
+
+    instrument_id   instrument  required
+    tick_size       price       required
+    lot_size        qty         required
+    min_price       price
+    max_price       price
+
+    optional {
+        symbol          string      "Ticker symbol (e.g. BTCUSD)"
+        name            string      "Full instrument name"
+        currency        string      "Quote currency"
+        exchange        string      "Exchange code"
+        isin            string      "ISIN code (TradFi)"
+    }
+}
+
+message SecurityListRequest {
+    @type 0x21
+    "Query available instruments."
+
+    request_id      id          required
+
+    optional {
+        symbol_filter   string      "Wildcard filter (e.g. BTC*)"
+        exchange_filter string
+    }
+}
+
+message SecurityListResponse {
+    @type 0x22
+    "Instruments follow as individual InstrumentDefinition messages."
+
+    request_id      id          required
+    total_instruments count     required
+    accepted        bool        required
+
+    optional {
+        text            string
+    }
+}

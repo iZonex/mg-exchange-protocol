@@ -1,0 +1,184 @@
+# ============================================================
+# MGEP Post-Trade Schema
+# Trade capture, allocation, confirmation, settlement.
+# Supports both TradFi (DVP, T+1) and crypto (on-chain, instant).
+# ============================================================
+
+schema post_trade
+version 1
+import common
+
+# ── Trade Capture ────────────────────────────────────────
+
+enum TradeReportType {
+    Submit
+    Alleged
+    Accept
+    Decline
+    Cancel
+    Replace
+}
+
+message TradeCaptureReport {
+    @type 0x01
+    "Post-trade confirmation for clearing/settlement."
+
+    trade_report_id id          required
+    trade_id        id          required
+    instrument_id   instrument  required
+    side            Side        required
+    report_type     TradeReportType required
+    price           price       required
+    quantity        qty         required
+    exec_time       timestamp   required
+
+    optional {
+        contra_firm     string      "Counterparty firm"
+        account         string
+        settlement_date string      "YYYYMMDD"
+        fee             price
+        fee_currency    string
+        trade_condition string      "regular, late, OTC"
+    }
+}
+
+message TradeCaptureReportRequest {
+    @type 0x02
+    "Query trade history."
+
+    request_id      id          required
+    trade_id        id                      "0 = all trades matching filters"
+    instrument_id   instrument              "0 = all instruments"
+
+    optional {
+        account         string
+        start_time      timestamp
+        end_time        timestamp
+    }
+}
+
+# ── Allocation ───────────────────────────────────────────
+
+enum AllocStatus {
+    Accepted
+    Rejected
+    Partial
+    Pending
+}
+
+message AllocationInstruction {
+    @type 0x10
+    "Split fills across sub-accounts (institutional workflow)."
+
+    alloc_id        id          required
+    trade_id        id          required
+    instrument_id   instrument  required
+    side            Side        required
+    total_quantity  qty         required
+    avg_price       price       required
+    num_allocs      count       required
+
+    optional {
+        entries         bytes       "Packed allocation entries"
+        text            string
+        settlement_date string
+    }
+}
+
+message AllocationReport {
+    @type 0x11
+    "Response to allocation instruction."
+
+    alloc_id        id          required
+    alloc_report_id id          required
+    status          AllocStatus required
+
+    optional {
+        text            string
+        reject_reason   string
+    }
+}
+
+# ── Confirmation ─────────────────────────────────────────
+
+message Confirmation {
+    @type 0x20
+    "Trade confirmation for a specific allocation."
+
+    confirm_id      id          required
+    trade_id        id          required
+    alloc_id        id          required
+    instrument_id   instrument  required
+    side            Side        required
+    confirmed       bool        required
+    quantity        qty         required
+    price           price       required
+    gross_amount    price       required
+    net_amount      price       required
+
+    optional {
+        account         string
+        settlement_date string
+        commission      price
+        text            string
+    }
+}
+
+# ── Settlement ───────────────────────────────────────────
+
+enum SettlementStatus {
+    Pending
+    Settled
+    Failed
+    Canceled
+}
+
+message SettlementInstruction {
+    @type 0x30
+    "Settlement instruction — works for DVP, FOP, and on-chain."
+
+    settl_id        id          required
+    trade_id        id          required
+    instrument_id   instrument  required
+    side            Side        required
+    quantity        qty         required
+    price           price       required
+    settlement_amount price     required
+
+    optional {
+        account         string
+        settlement_date string
+        currency        string
+        delivery_method string      "DVP, FOP, onchain"
+        chain_address   string      "Crypto: wallet address"
+        chain_id        id          "Crypto: chain ID (ETH=1)"
+    }
+}
+
+message ConfirmationAck {
+    @type 0x21
+    "Acknowledge or dispute a confirmation."
+
+    confirm_id      id          required
+    trade_id        id          required
+    confirmed       bool        required
+
+    optional {
+        text            string
+    }
+}
+
+message SettlementStatus {
+    @type 0x31
+    "Settlement status update."
+
+    settl_id        id          required
+    trade_id        id          required
+    status          SettlementStatus required
+
+    optional {
+        text            string
+        tx_hash         string      "Crypto: on-chain transaction hash"
+        settled_time    timestamp
+    }
+}

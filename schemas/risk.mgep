@@ -1,0 +1,168 @@
+# ============================================================
+# MGEP Risk Schema
+# Positions, collateral, margin.
+# Supports TradFi (SPAN, VaR) and crypto (isolated, cross margin).
+# ============================================================
+
+schema risk
+version 1
+import common
+
+# ── Positions ────────────────────────────────────────────
+
+message RequestForPositions {
+    @type 0x01
+    "Query account positions."
+
+    request_id      id          required
+    account_id      id          required
+    instrument_id   instrument              "0 = all instruments"
+}
+
+message PositionReport {
+    @type 0x02
+    "Account position for an instrument."
+
+    report_id       id          required
+    request_id      id                      "0 if push (unsolicited)"
+    account_id      id          required
+    instrument_id   instrument  required
+    long_quantity   qty         required
+    short_quantity  qty         required
+    net_quantity    qty         required
+    avg_entry_price price       required
+    unrealized_pnl  price       required
+    realized_pnl    price       required
+
+    optional {
+        liquidation_price price     "Crypto: forced liquidation price"
+        margin_used     price       "Margin allocated to this position"
+        funding_rate    price       "Crypto perps: current funding rate"
+        mark_price      price       "Mark price for P&L calculation"
+        currency        string
+    }
+}
+
+# ── Collateral ───────────────────────────────────────────
+
+message CollateralInquiry {
+    @type 0x10
+    "Query account balances and collateral."
+
+    request_id      id          required
+    account_id      id          required
+
+    optional {
+        currency        string      "Filter by currency"
+    }
+}
+
+message CollateralReport {
+    @type 0x11
+    "Account collateral and margin summary."
+
+    report_id       id          required
+    request_id      id          required
+    account_id      id          required
+    total_value     price       required    "Total collateral in base currency"
+    available       price       required    "Available after margin"
+    margin_used     price       required
+    margin_ratio    price       required    "Utilization: margin / total"
+
+    optional {
+        currency        string
+        locked_balance  price       "In open orders"
+    }
+}
+
+enum CollateralAction {
+    Deposit
+    Withdraw
+    Transfer
+}
+
+message CollateralRequest {
+    @type 0x12
+    "Deposit, withdraw, or transfer collateral."
+
+    request_id      id          required
+    account_id      id          required
+    action          CollateralAction required
+    amount          price       required
+
+    optional {
+        currency        string
+        target_account  string      "For transfers"
+        chain_address   string      "Crypto: withdrawal address"
+        chain_id        id          "Crypto: chain ID"
+    }
+}
+
+message CollateralRequestAck {
+    @type 0x13
+    "Response to collateral request."
+
+    request_id      id          required
+    accepted        bool        required
+
+    optional {
+        text            string
+        reject_reason   string
+        tx_hash         string      "Crypto: on-chain tx hash"
+    }
+}
+
+# ── Margin ───────────────────────────────────────────────
+
+message MarginRequirementInquiry {
+    @type 0x20
+    "Query margin requirements."
+
+    request_id      id          required
+    account_id      id          required
+    instrument_id   instrument              "0 = portfolio level"
+}
+
+message MarginRequirementReport {
+    @type 0x21
+    "Margin requirement breakdown."
+
+    report_id       id          required
+    request_id      id          required
+    account_id      id          required
+    instrument_id   instrument
+    initial_margin  price       required    "To open position"
+    maintenance_margin price    required    "To maintain position"
+    variation_margin price      required    "Mark-to-market P&L"
+    total_margin    price       required
+
+    optional {
+        margin_model    string      "SPAN, VaR, cross, isolated"
+        currency        string
+    }
+}
+
+# ── Margin Call ──────────────────────────────────────────
+
+enum MarginCallAction {
+    Info            "Margin utilization report"
+    Warning         "Approaching threshold"
+    Call            "Must deposit or reduce position"
+    Liquidation     "Forced liquidation in progress"
+}
+
+message MarginCall {
+    @type 0x22
+    "Margin call notification."
+
+    call_id         id          required
+    account_id      id          required
+    action          MarginCallAction required
+    margin_deficit  price       required    "Amount to deposit"
+    deadline        timestamp   required    "When liquidation starts"
+
+    optional {
+        text            string
+        liquidation_pct price       "% of position to be liquidated"
+    }
+}

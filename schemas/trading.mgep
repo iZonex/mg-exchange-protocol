@@ -1,0 +1,229 @@
+# ============================================================
+# MGEP Trading Schema
+# Order entry, execution, and cancel messages.
+# ============================================================
+
+schema trading
+version 1
+import common
+
+# ── New Order ────────────────────────────────────────────
+
+message NewOrderSingle {
+    @type 0x01
+    "Submit a new order to the exchange."
+
+    order_id        id          required    "Exchange-assigned order ID"
+    instrument_id   instrument  required    "Target instrument"
+    side            Side        required
+    order_type      OrderType   required
+    time_in_force   TimeInForce
+    price           price       nullable    "Required for limit orders, null for market"
+    quantity        qty         required    "Order quantity, must be > 0"
+    stop_price      price       nullable    "Trigger price for stop orders"
+
+    optional {
+        account         string      "Trading account"
+        client_order_id string      "Client-assigned unique order ID"
+        client_tag      string      "Free-form client tag"
+        max_show        qty         "Iceberg: visible quantity"
+        expire_time     timestamp   "GTD: expiration time"
+        self_trade_prevention_id  id   "STP group ID"
+        # Regulatory (MiFID II / RegNMS)
+        lei             string      "Legal Entity Identifier (20 chars)"
+        order_capacity  string      "Agency, Principal, RisklessPrincipal"
+        short_selling   bool        "true = short sale"
+        algo_id         string      "Algorithm identifier"
+        investment_decision_maker  string  "Person/algo making the decision"
+    }
+}
+
+# ── Cancel ───────────────────────────────────────────────
+
+message OrderCancelRequest {
+    @type 0x02
+    "Request to cancel an existing order."
+
+    order_id        id          required
+    cancel_id       id          required    "Unique cancel request ID"
+    instrument_id   instrument  required
+    side            Side        required
+}
+
+message OrderCancelReplaceRequest {
+    @type 0x03
+    "Replace an existing order (cancel + new atomically)."
+
+    order_id        id          required    "Order to replace"
+    replace_id      id          required    "Unique replace request ID"
+    instrument_id   instrument  required
+    side            Side        required
+    order_type      OrderType   required
+    time_in_force   TimeInForce
+    price           price       nullable
+    quantity        qty         required
+    stop_price      price       nullable
+}
+
+message OrderMassCancelRequest {
+    @type 0x04
+    "Cancel all orders matching criteria."
+
+    cancel_id       id          required
+    instrument_id   instrument              "0 = all instruments"
+    side            Side                    "null = both sides"
+}
+
+# ── Execution ────────────────────────────────────────────
+
+message ExecutionReport {
+    @type 0x05
+    "Acknowledges order actions: new, fill, cancel, reject."
+
+    order_id        id          required
+    exec_id         id          required    "Unique execution ID"
+    instrument_id   instrument  required
+    side            Side        required
+    exec_type       ExecType    required
+    order_status    OrderStatus required
+    price           price       nullable
+    quantity        qty         required
+    leaves_qty      qty         required    "Remaining quantity"
+    cum_qty         qty         required    "Cumulative filled quantity"
+    last_px         price       nullable    "Last fill price"
+    last_qty        qty         nullable    "Last fill quantity"
+    transact_time   timestamp   required    "Exchange timestamp of this event"
+
+    optional {
+        text            string      "Human-readable message"
+        trade_id        id          "Trade ID for fills"
+        fee             price       "Transaction fee"
+        fee_currency    string      "Fee currency (e.g. USD, BTC)"
+        # Regulatory
+        venue_exec_id   string      "Venue execution ID for regulatory reporting"
+        regulatory_report_id string "Regulatory transaction report ID"
+        trade_condition string      "Regular, LateReport, OutOfSequence"
+    }
+}
+
+message OrderMassCancelReport {
+    @type 0x08
+    "Response to mass cancel request."
+
+    cancel_id       id          required
+    instrument_id   instrument
+    accepted        bool        required
+    total_affected  count                   "Number of orders canceled"
+
+    optional {
+        text            string
+        reject_reason   string
+    }
+}
+
+enum CancelRejectReason {
+    UnknownOrder        "Order not found"
+    TooLateToCancel     "Order already filled or expired"
+    OrderAlreadyPending "Cancel/replace already in progress"
+    DuplicateRequest    "This cancel_id already used"
+    InvalidInstrument   "Instrument mismatch"
+    NotAuthorized       "Not authorized to cancel this order"
+}
+
+message OrderCancelReject {
+    @type 0x06
+    "Cancel or replace was rejected."
+
+    order_id        id          required
+    cancel_id       id          required
+    reason          CancelRejectReason required
+
+    optional {
+        text            string      "Human-readable explanation"
+    }
+}
+
+# ── Status Query ─────────────────────────────────────────
+
+message OrderStatusRequest {
+    @type 0x07
+    "Query current state of an order. Response = ExecutionReport."
+
+    order_id        id          required
+    instrument_id   instrument  required
+    side            Side
+
+    optional {
+        account         string
+    }
+}
+
+message OrderMassStatusRequest {
+    @type 0x0A
+    "Query all open orders. Response = stream of ExecutionReports."
+
+    request_id      id          required
+    instrument_id   instrument              "0 = all instruments"
+    side            Side                    "null = both sides"
+
+    optional {
+        account         string
+    }
+}
+
+# ── Cross Orders ─────────────────────────────────────────
+
+message NewOrderCross {
+    @type 0x09
+    "Pre-arranged cross trade (two sides matched at one price)."
+
+    cross_id        id          required
+    instrument_id   instrument  required
+    price           price       required
+    buy_quantity    qty         required
+    sell_quantity   qty         required
+
+    optional {
+        buy_account     string
+        sell_account    string
+    }
+}
+
+message CrossOrderCancelRequest {
+    @type 0x0B
+    "Cancel a cross order."
+
+    cross_id        id          required
+    cancel_id       id          required
+    instrument_id   instrument  required
+}
+
+# ── Rejects ──────────────────────────────────────────────
+
+message Reject {
+    @type 0x10
+    "Session-level reject: message was malformed or violated protocol."
+
+    ref_seq_num     seq         required    "Sequence of rejected message"
+    ref_msg_type    string      required    "Type of rejected message"
+    reject_reason   string      required
+
+    optional {
+        text            string
+        ref_field       string      "Which field caused the reject"
+    }
+}
+
+message BusinessReject {
+    @type 0x11
+    "Application-level reject: message was valid but cannot be processed."
+
+    ref_seq_num     seq         required
+    ref_msg_type    string      required
+    business_reason string      required
+    order_id        id                      "Related order, if any"
+
+    optional {
+        text            string
+    }
+}

@@ -1,0 +1,83 @@
+name: MGEP CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src/rust/Cargo.lock') }}
+
+      - name: Check formatting
+        working-directory: src/rust
+        run: cargo fmt -- --check
+
+      - name: Clippy
+        working-directory: src/rust
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run tests
+        working-directory: src/rust
+        run: cargo test --lib
+
+      - name: Run integration tests
+        working-directory: src/rust
+        run: cargo test --test integration_exchange
+
+      - name: Build benchmarks (compile check)
+        working-directory: src/rust
+        run: cargo bench --no-run
+
+      - name: Build examples
+        working-directory: src/rust
+        run: cargo build --examples
+
+      - name: Build codegen binary
+        working-directory: src/rust
+        run: cargo build --bin mgep-codegen
+
+      - name: Verify codegen parses all schemas
+        working-directory: src/rust
+        run: |
+          for f in ../../schemas/*.mgep; do
+            cargo run --bin mgep-codegen -- "$f" > /dev/null
+            echo "OK: $(basename $f)"
+          done
+
+  bench:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run benchmarks
+        working-directory: src/rust
+        run: cargo bench --bench encode_decode --bench full_stack -- --output-format bencher | tee benchmark-results.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: src/rust/benchmark-results.txt

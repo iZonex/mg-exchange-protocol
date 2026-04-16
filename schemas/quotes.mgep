@@ -1,0 +1,142 @@
+# ============================================================
+# MGEP Quotes Schema
+# Pre-trade quoting, RFQ, market making.
+# ============================================================
+
+schema quotes
+version 1
+import common
+
+# ── RFQ ──────────────────────────────────────────────────
+
+message QuoteRequest {
+    @type 0x01
+    "Request for quote — ask a market maker for a price."
+
+    request_id      id          required
+    instrument_id   instrument  required
+    side            Side                    "Buy/Sell/null (both sides)"
+    quantity        qty         required
+
+    optional {
+        account         string
+        settlement_type string      "T+1, T+2, instant"
+        expire_time     timestamp
+    }
+}
+
+# ── Quotes ───────────────────────────────────────────────
+
+message Quote {
+    @type 0x02
+    "Single-instrument quote (response to RFQ or unsolicited)."
+
+    quote_id        id          required
+    request_id      id                      "0 if unsolicited"
+    instrument_id   instrument  required
+    bid_price       price       nullable
+    bid_quantity    qty         nullable
+    ask_price       price       nullable
+    ask_quantity    qty         nullable
+    valid_until     timestamp               "Quote expiration"
+
+    optional {
+        account         string
+        condition       string      "firm, indicative"
+        settlement_type string
+    }
+}
+
+message QuoteReplace {
+    @type 0x03
+    "Update an existing quote without cancel+requote."
+
+    quote_id        id          required
+    instrument_id   instrument  required
+    bid_price       price       nullable
+    bid_quantity    qty         nullable
+    ask_price       price       nullable
+    ask_quantity    qty         nullable
+    valid_until     timestamp
+}
+
+message QuoteCancel {
+    @type 0x04
+    "Cancel one or all quotes."
+
+    quote_id        id                      "Specific quote, or 0 for mass"
+    instrument_id   instrument              "0 if cancel-all"
+    cancel_all      bool                    "true = cancel all quotes"
+}
+
+message MassQuote {
+    @type 0x05
+    "Market maker: update quotes for many instruments at once."
+
+    quote_id        id          required    "Batch identifier"
+    num_entries     count       required    "Number of entries in payload"
+
+    optional {
+        account         string
+        entries         bytes       "Packed quote entries"
+    }
+}
+
+enum QuoteRejectReason {
+    UnknownInstrument
+    InvalidPrice
+    InvalidQuantity
+    StaleQuote
+    NotEntitled
+    RateLimit
+}
+
+message MassQuoteAck {
+    @type 0x06
+    "Acknowledgment of mass quote."
+
+    quote_id        id          required
+    accepted        bool        required
+    num_accepted    count
+    num_rejected    count
+
+    optional {
+        text            string
+        rejected_entries bytes   "Packed: instrument_id(u32) + reason(u8) per reject"
+    }
+}
+
+# ── IOI ──────────────────────────────────────────────────
+
+enum IOIType {
+    New
+    Cancel
+    Replace
+}
+
+message QuoteStatusRequest {
+    @type 0x07
+    "Query current status of a quote."
+
+    quote_id        id          required
+    instrument_id   instrument  required
+}
+
+message IOI {
+    @type 0x10
+    "Indication of Interest — signal intent to trade."
+
+    ioi_id          id          required
+    instrument_id   instrument  required
+    ioi_type        IOIType     required
+    side            Side        required
+    price           price       nullable    "null = at market"
+    quantity        qty         required
+    valid_until     timestamp
+
+    optional {
+        account         string
+        text            string
+        natural         bool        "true = natural order flow"
+    }
+}
