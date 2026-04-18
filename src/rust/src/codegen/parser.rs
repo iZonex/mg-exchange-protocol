@@ -333,13 +333,12 @@ fn parse_name_and_description(line: &str) -> (String, Option<String>) {
 }
 
 fn extract_description(line: &str) -> (&str, Option<String>) {
-    if let Some(start) = line.find('"') {
-        if let Some(end) = line[start + 1..].find('"') {
+    if let Some(start) = line.find('"')
+        && let Some(end) = line[start + 1..].find('"') {
             let desc = line[start + 1..start + 1 + end].to_string();
             let rest = line[..start].trim();
             return (rest, Some(desc));
         }
-    }
     (line, None)
 }
 

@@ -65,6 +65,7 @@ fn wire_vector_full_header() {
 fn wire_vector_new_order_single() {
     let order = NewOrderSingleCore {
         order_id: 1000,
+        client_order_id: 0,
         instrument_id: 42,
         side: Side::Buy as u8,     // 1
         order_type: OrderType::Limit as u8, // 2
@@ -78,8 +79,8 @@ fn wire_vector_new_order_single() {
     enc.encode(1, 1, &order, None);
     let msg = enc.as_slice();
 
-    // Total size: 32 (header) + 40 (core) = 72
-    assert_eq!(msg.len(), 72);
+    // Total size: 32 (header) + 48 (core) = 80
+    assert_eq!(msg.len(), 80);
 
     // Verify magic
     assert_eq!(msg[0], 0x4D);
@@ -88,27 +89,28 @@ fn wire_vector_new_order_single() {
     // Verify core block starts at offset 32
     let core = &msg[CORE_BLOCK_OFFSET..];
     assert_eq!(&core[0..8], &1000u64.to_le_bytes()); // order_id
-    assert_eq!(&core[8..12], &42u32.to_le_bytes()); // instrument_id
-    assert_eq!(core[12], 1); // side = Buy
-    assert_eq!(core[13], 2); // order_type = Limit
+    assert_eq!(&core[8..16], &0u64.to_le_bytes()); // client_order_id
+    assert_eq!(&core[16..20], &42u32.to_le_bytes()); // instrument_id
+    assert_eq!(core[20], 1); // side = Buy
+    assert_eq!(core[21], 2); // order_type = Limit
 
     // price = 150.25 * 10^8 = 15025000000
-    let price_bytes = &core[16..24];
+    let price_bytes = &core[24..32];
     let price_val = i64::from_le_bytes(price_bytes.try_into().unwrap());
     assert_eq!(price_val, 15_025_000_000);
 
     // quantity = 100.0 * 10^8 = 10000000000
-    let qty_bytes = &core[24..32];
+    let qty_bytes = &core[32..40];
     let qty_val = i64::from_le_bytes(qty_bytes.try_into().unwrap());
     assert_eq!(qty_val, 10_000_000_000);
 
     // stop_price = NULL = i64::MIN
-    let stop_bytes = &core[32..40];
+    let stop_bytes = &core[40..48];
     let stop_val = i64::from_le_bytes(stop_bytes.try_into().unwrap());
     assert_eq!(stop_val, i64::MIN);
 
-    println!("NewOrderSingle (72B): {}", to_hex(msg));
-    println!("  Core block (40B):   {}", to_hex(core));
+    println!("NewOrderSingle (80B): {}", to_hex(msg));
+    println!("  Core block (48B):   {}", to_hex(core));
 }
 
 #[test]
@@ -149,6 +151,7 @@ fn wire_vector_crc32() {
     // CRC32 of a real message
     let order = NewOrderSingleCore {
         order_id: 1, instrument_id: 1, side: 1, order_type: 2,
+        client_order_id: 0,
         time_in_force: 1, price: Decimal::from_f64(100.0),
         quantity: Decimal::from_f64(10.0), stop_price: Decimal::NULL,
     };
@@ -165,6 +168,7 @@ fn wire_vector_crc32() {
 fn wire_vector_with_flex() {
     let order = NewOrderSingleCore {
         order_id: 42, instrument_id: 7, side: 1, order_type: 2,
+        client_order_id: 0,
         time_in_force: 1, price: Decimal::from_f64(100.0),
         quantity: Decimal::from_f64(10.0), stop_price: Decimal::NULL,
     };

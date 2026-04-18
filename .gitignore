@@ -30,3 +30,16 @@ Thumbs.db
 
 # Generated (can be regenerated)
 /src/rust/src/generated/
+
+# Language-binding build artifacts
+/bindings/java/out/
+/bindings/c/test_mgep
+/bindings/cpp/test_mgep_cpp
+/bindings/cpp/mgep_c.o
+*.class
+*.o
+
+# Node/TypeScript
+/bindings/typescript/node_modules/
+/bindings/typescript/dist/
+/bindings/typescript/.deno/

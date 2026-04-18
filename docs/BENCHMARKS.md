@@ -16,9 +16,9 @@ All numbers are median (p50) with [lower bound, upper bound] confidence interval
 |---|---|---|
 | **Decode NewOrder core** | **0.84 ns** | Zero-copy pointer cast, read order_id + price |
 | **Dispatch (48 arms)** | **0.98 ns** | Match (schema_id, msg_type), try_from_bytes |
-| **Encode NewOrder core** | **1.17 ns** | Write 32B header + 40B core to pre-allocated buffer |
+| **Encode NewOrder core** | **1.17 ns** | Write 32B header + 48B core to pre-allocated buffer |
 | **Decode FullHeader** | **1.65 ns** | Read frame + message header (32 bytes) |
-| **Decode ExecReport** | **1.47 ns** | Zero-copy 80-byte core block |
+| **Decode ExecReport** | **1.47 ns** | Zero-copy 88-byte core block |
 | **Validate NewOrder** | **4.69 ns** | Field range checks (side, order_type, qty > 0) |
 | **Encode + flex** | **6.96 ns** | Core + 2 flex string fields |
 | **Decode flex string** | **12.2 ns** | Find field by ID + read string |

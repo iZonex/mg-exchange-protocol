@@ -284,11 +284,16 @@ impl CancelRejectReason {
 // ═══════════════════════════════════════════════
 
 define_core!(
-    /// Submit a new order to the exchange. — 40 bytes.
-    NewOrderSingleCore, schema=0x0001, msg_type=0x01, size=40,
+    /// Submit a new order to the exchange. — 48 bytes.
+    NewOrderSingleCore, schema=0x0001, msg_type=0x01, size=48,
     {
-        /// Exchange-assigned order ID
+        /// Exchange-assigned order ID (0 on submit, echoed back in ExecutionReport).
         pub order_id: u64,
+        /// Client-assigned unique order ID. Used for idempotent retry: re-sending
+        /// the same `(session, client_order_id)` pair returns the original
+        /// ExecutionReport rather than creating a duplicate order. MUST be
+        /// non-zero and unique per session within the dedup window.
+        pub client_order_id: u64,
         /// Target instrument
         pub instrument_id: u32,
         pub side: u8,
@@ -336,35 +341,32 @@ impl<'a> NewOrderSingleOptional<'a> {
     /// Trading account
     pub fn account(&self) -> Option<&'a str> { self.reader.get_string(1) }
 
-    /// Client-assigned unique order ID
-    pub fn client_order_id(&self) -> Option<&'a str> { self.reader.get_string(2) }
-
     /// Free-form client tag
-    pub fn client_tag(&self) -> Option<&'a str> { self.reader.get_string(3) }
+    pub fn client_tag(&self) -> Option<&'a str> { self.reader.get_string(2) }
 
     /// Iceberg: visible quantity
-    pub fn max_show(&self) -> Option<crate::types::Decimal> { self.reader.get_decimal(4) }
+    pub fn max_show(&self) -> Option<crate::types::Decimal> { self.reader.get_decimal(3) }
 
     /// GTD: expiration time
-    pub fn expire_time(&self) -> Option<u64> { self.reader.get_u64(5) }
+    pub fn expire_time(&self) -> Option<u64> { self.reader.get_u64(4) }
 
     /// STP group ID
-    pub fn self_trade_prevention_id(&self) -> Option<u64> { self.reader.get_u64(6) }
+    pub fn self_trade_prevention_id(&self) -> Option<u64> { self.reader.get_u64(5) }
 
     /// Legal Entity Identifier (20 chars)
-    pub fn lei(&self) -> Option<&'a str> { self.reader.get_string(7) }
+    pub fn lei(&self) -> Option<&'a str> { self.reader.get_string(6) }
 
     /// Agency, Principal, RisklessPrincipal
-    pub fn order_capacity(&self) -> Option<&'a str> { self.reader.get_string(8) }
+    pub fn order_capacity(&self) -> Option<&'a str> { self.reader.get_string(7) }
 
     /// true = short sale
-    pub fn short_selling(&self) -> Option<u64> { self.reader.get_u64(9) }
+    pub fn short_selling(&self) -> Option<u64> { self.reader.get_u64(8) }
 
     /// Algorithm identifier
-    pub fn algo_id(&self) -> Option<&'a str> { self.reader.get_string(10) }
+    pub fn algo_id(&self) -> Option<&'a str> { self.reader.get_string(9) }
 
     /// Person/algo making the decision
-    pub fn investment_decision_maker(&self) -> Option<&'a str> { self.reader.get_string(11) }
+    pub fn investment_decision_maker(&self) -> Option<&'a str> { self.reader.get_string(10) }
 }
 
 define_core!(
@@ -412,10 +414,13 @@ define_core!(
 );
 
 define_core!(
-    /// Acknowledges order actions: new, fill, cancel, reject. — 80 bytes.
-    ExecutionReportCore, schema=0x0001, msg_type=0x05, size=80,
+    /// Acknowledges order actions: new, fill, cancel, reject. — 88 bytes.
+    ExecutionReportCore, schema=0x0001, msg_type=0x05, size=88,
     {
         pub order_id: u64,
+        /// Echoes NewOrderSingle.client_order_id; 0 for server-initiated reports
+        /// (e.g. expiry, halt-induced cancellation).
+        pub client_order_id: u64,
         /// Unique execution ID
         pub exec_id: u64,
         pub instrument_id: u32,
@@ -479,10 +484,13 @@ impl<'a> ExecutionReportOptional<'a> {
 }
 
 define_core!(
-    /// Cancel or replace was rejected. — 24 bytes.
-    OrderCancelRejectCore, schema=0x0001, msg_type=0x06, size=24,
+    /// Cancel or replace was rejected. — 32 bytes.
+    OrderCancelRejectCore, schema=0x0001, msg_type=0x06, size=32,
     {
         pub order_id: u64,
+        /// Echoes ClOrdID of the rejected request; 0 if the reject is for
+        /// a mass-cancel or for an unknown-to-client order.
+        pub client_order_id: u64,
         pub cancel_id: u64,
         pub reason: u8,
         pub _pad: [u8; 7],
@@ -893,6 +901,102 @@ impl<'a> SecurityListResponseOptional<'a> {
     }
 
     pub fn text(&self) -> Option<&'a str> { self.reader.get_string(1) }
+}
+
+// ── Book Snapshot / Recovery ───────────────────────────────
+
+define_core!(
+    /// Request a full-book snapshot for recovery. — 16 bytes.
+    BookSnapshotRequestCore, schema=0x0002, msg_type=0x30, size=16,
+    {
+        pub request_id: u64,
+        pub instrument_id: u32,
+        /// 0 = full book, N = top N levels per side.
+        pub max_levels: u32,
+    }
+);
+
+define_core!(
+    /// Start of a snapshot stream. Declares the snapshot boundary. — 40 bytes.
+    BookSnapshotBeginCore, schema=0x0002, msg_type=0x31, size=40,
+    {
+        pub request_id: u64,
+        pub instrument_id: u32,
+        pub _pad: [u8; 4],
+        /// Market data seq this snapshot is consistent with.
+        pub last_applied_seq: u64,
+        /// Total BookSnapshotLevel messages that will follow.
+        pub level_count: u32,
+        pub _pad2: [u8; 4],
+        /// Unique per snapshot session; echoed in Level/End.
+        pub snapshot_id: u64,
+    }
+);
+
+define_core!(
+    /// One price level inside a snapshot. — 40 bytes.
+    BookSnapshotLevelCore, schema=0x0002, msg_type=0x32, size=40,
+    {
+        pub snapshot_id: u64,
+        /// Monotonic 0..level_count-1; detects dropped levels.
+        pub level_index: u32,
+        pub side: u8,
+        pub _pad: [u8; 3],
+        pub price: Decimal,
+        /// Aggregate quantity at this price.
+        pub quantity: Decimal,
+        pub order_count: u32,
+        pub _pad2: [u8; 4],
+    }
+);
+
+define_core!(
+    /// End of snapshot stream. Client validates CRC before applying. — 32 bytes.
+    BookSnapshotEndCore, schema=0x0002, msg_type=0x33, size=32,
+    {
+        pub snapshot_id: u64,
+        /// Must equal last_applied_seq from Begin.
+        pub final_seq: u64,
+        /// CRC32 over concatenated Level payloads in order (u64 for alignment; high 32 bits reserved).
+        pub checksum: u64,
+        /// Echoes Begin.level_count for paranoia.
+        pub level_count: u32,
+        pub _pad: [u8; 4],
+    }
+);
+
+define_core!(
+    /// Server refuses snapshot (unknown instrument, rate-limited, etc.). — 16 bytes.
+    BookSnapshotRejectCore, schema=0x0002, msg_type=0x34, size=16,
+    {
+        pub request_id: u64,
+        /// 1=UnknownInstrument 2=RateLimited 3=Unavailable 4=TooLarge
+        pub reason_code: u8,
+        pub _pad: [u8; 7],
+    }
+);
+
+/// Reason codes for `BookSnapshotReject`. Keep in sync with spec.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SnapshotRejectReason {
+    UnknownInstrument = 1,
+    RateLimited = 2,
+    Unavailable = 3,
+    TooLarge = 4,
+}
+
+impl SnapshotRejectReason {
+    #[inline(always)]
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            1 => Some(Self::UnknownInstrument),
+            2 => Some(Self::RateLimited),
+            3 => Some(Self::Unavailable),
+            4 => Some(Self::TooLarge),
+            _ => None,
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════

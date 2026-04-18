@@ -169,6 +169,7 @@ mod tests {
         for i in 0..5u64 {
             let order = NewOrderSingleCore {
                 order_id: 1000 + i, instrument_id: 42,
+                client_order_id: 0,
                 side: 1, order_type: 2, time_in_force: 1,
                 price: Decimal::from_f64(100.0 + i as f64),
                 quantity: Decimal::from_f64(10.0),
@@ -215,6 +216,7 @@ mod tests {
 
         let order = NewOrderSingleCore {
             order_id: 1, instrument_id: 1, side: 1, order_type: 1,
+            client_order_id: 0,
             time_in_force: 1, price: Decimal::ZERO, quantity: Decimal::ZERO,
             stop_price: Decimal::NULL,
         };
@@ -232,6 +234,7 @@ mod tests {
     fn batch_reader_rejects_non_batch() {
         let order = NewOrderSingleCore {
             order_id: 1, instrument_id: 1, side: 1, order_type: 1,
+            client_order_id: 0,
             time_in_force: 1, price: Decimal::ZERO, quantity: Decimal::ZERO,
             stop_price: Decimal::NULL,
         };

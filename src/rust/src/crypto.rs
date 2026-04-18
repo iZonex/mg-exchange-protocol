@@ -693,6 +693,7 @@ mod tests {
         let mut encoder = crate::codec::MessageBuffer::with_capacity(256);
         let order = crate::messages::NewOrderSingleCore {
             order_id: 42,
+            client_order_id: 0,
             instrument_id: 7,
             side: 1,
             order_type: 2,

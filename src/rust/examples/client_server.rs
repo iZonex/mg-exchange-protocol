@@ -82,6 +82,7 @@ fn run_client(addr: std::net::SocketAddr) {
     for i in 0..5u64 {
         let order = NewOrderSingleCore {
             order_id: 1000 + i,
+            client_order_id: 0,
             instrument_id: 42,
             side: if i % 2 == 0 { Side::Buy as u8 } else { Side::Sell as u8 },
             order_type: OrderType::Limit as u8,
@@ -255,6 +256,7 @@ fn run_server(server: TcpServer) {
         // Build ExecutionReport using the generic encoder
         let report = ExecutionReportCore {
             order_id: order.order_id,
+            client_order_id: 0,
             exec_id: 5000 + order.order_id,
             instrument_id: order.instrument_id,
             side: order.side,

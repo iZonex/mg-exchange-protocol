@@ -120,6 +120,7 @@ mod tests {
         // Build a normal MGEP message
         let order = NewOrderSingleCore {
             order_id: 42, instrument_id: 7, side: 1, order_type: 2,
+            client_order_id: 0,
             time_in_force: 1, price: Decimal::from_f64(100.0),
             quantity: Decimal::from_f64(10.0), stop_price: Decimal::NULL,
         };
@@ -156,6 +157,7 @@ mod tests {
     fn no_replication_header_on_plain_message() {
         let order = NewOrderSingleCore {
             order_id: 1, instrument_id: 1, side: 1, order_type: 1,
+            client_order_id: 0,
             time_in_force: 1, price: Decimal::ZERO, quantity: Decimal::ZERO,
             stop_price: Decimal::NULL,
         };

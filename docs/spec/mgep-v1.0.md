@@ -295,33 +295,80 @@ An implementation is MGEP-compliant if:
 
 ## Appendix A: Message Type Quick Reference
 
-### Trading (0x0001)
-| Type | Name |
-|------|------|
-| 0x01 | NewOrderSingle |
-| 0x02 | OrderCancelRequest |
-| 0x03 | OrderCancelReplaceRequest |
-| 0x04 | OrderMassCancelRequest |
-| 0x05 | ExecutionReport |
-| 0x06 | OrderCancelReject |
-| 0x07 | OrderStatusRequest |
-| 0x08 | OrderMassCancelReport |
-| 0x09 | NewOrderCross |
-| 0x0A | OrderMassStatusRequest |
-| 0x10 | Reject |
-| 0x11 | BusinessReject |
+All message types defined by the MGEP standard schemas. The "Core" column
+is the size of the fixed `#[repr(C)]` core block, exclusive of header
+(32 B) and any optional flex payload.
 
 ### Session (0x0000)
-| Type | Name |
-|------|------|
-| 0x01 | Negotiate |
-| 0x02 | NegotiateResponse |
-| 0x03 | Establish |
-| 0x04 | EstablishAck |
-| 0x05 | Heartbeat |
-| 0x06 | RetransmitRequest |
-| 0x07 | Retransmission |
-| 0x08 | Terminate |
-| 0x0B | SequenceReset |
-| 0x0C | NotApplied |
-| 0x0D | TestRequest |
+
+| Type | Name | Core | Notes |
+|------|------|------|-------|
+| 0x01 | Negotiate | 48 B | Client proposes parameters |
+| 0x02 | NegotiateResponse | 56 B | Server accepts/rejects |
+| 0x03 | Establish | 48 B | Start sequenced messaging |
+| 0x04 | EstablishAck | 24 B | Server confirms + reports `journal_low_seq_num` |
+| 0x05 | Heartbeat | 8 B | Keepalive + implicit seq ack |
+| 0x06 | RetransmitRequest | 8 B | Request replay of missed messages |
+| 0x07 | Retransmission | 8 B | Header before replayed messages |
+| 0x08 | Terminate | 8 B | Graceful session end |
+| 0x0A | SessionStatus | 24 B | Current state report |
+| 0x0B | SequenceReset | 8 B | Reset sequence (reason 3 = JournalExhausted → snapshot recovery) |
+| 0x0C | NotApplied | 8 B | Messages received but not applied (gap) |
+| 0x0D | TestRequest | — | RTT measurement probe |
+| 0x0E | ClockStatus | 40 B | Clock discipline broadcast — see [§6](06-clock-discipline.md) |
+| 0x0F | KeyRotationRequest | 16 B | Announce AES-GCM epoch rotation |
+| 0x10 | KeyRotationAck | 16 B | Peer confirms rotation readiness |
+
+### Trading (0x0001)
+
+| Type | Name | Core | Notes |
+|------|------|------|-------|
+| 0x01 | NewOrderSingle | 48 B | `client_order_id` **required** and non-zero (idempotency key) |
+| 0x02 | OrderCancelRequest | 24 B | |
+| 0x03 | OrderCancelReplaceRequest | 48 B | |
+| 0x04 | OrderMassCancelRequest | 16 B | |
+| 0x05 | ExecutionReport | 88 B | Echoes submitting order's `client_order_id` |
+| 0x06 | OrderCancelReject | 32 B | Echoes request's `client_order_id` |
+| 0x07 | OrderStatusRequest | — | |
+| 0x08 | OrderMassCancelReport | — | |
+| 0x09 | NewOrderCross | — | |
+| 0x0A | OrderMassStatusRequest | — | |
+| 0x0B | CrossOrderCancelRequest | — | |
+| 0x10 | Reject | — | Session-level reject (malformed) |
+| 0x11 | BusinessReject | 16 B | Application-level reject; flex field 1 carries the code string |
+
+### Market Data (0x0002)
+
+| Type | Name | Core | Notes |
+|------|------|------|-------|
+| 0x01 | OrderAdd | 32 B | |
+| 0x02 | OrderModify | 24 B | |
+| 0x03 | OrderDelete | 8 B | |
+| 0x04 | OrderExecuted | 32 B | |
+| 0x05 | Trade | 40 B | |
+| 0x08 | TradingStatus | 8 B | |
+| 0x0B | InstrumentDefinition | 40 B | |
+| 0x10 | Subscribe | 24 B | |
+| 0x11 | Unsubscribe | 16 B | |
+| 0x12 | SubscribeResponse | 16 B | |
+| 0x20 | MarketStatistics | 72 B | |
+| 0x21 | SecurityListRequest | 8 B | |
+| 0x22 | SecurityListResponse | 16 B | |
+| 0x30 | BookSnapshotRequest | 16 B | Triggers recovery stream — see [§5](05-market-data.md) |
+| 0x31 | BookSnapshotBegin | 40 B | |
+| 0x32 | BookSnapshotLevel | 40 B | |
+| 0x33 | BookSnapshotEnd | 32 B | CRC32-validated |
+| 0x34 | BookSnapshotReject | 16 B | |
+
+### Quotes (0x0003), Post-Trade (0x0004), Risk (0x0005)
+
+See `schemas/quotes.mgep`, `schemas/post_trade.mgep`, `schemas/risk.mgep`
+for the full enumeration. These schemas are stable but rarely exercised
+by non-market-maker deployments.
+
+### Compliance / Audit (internal, not on the wire)
+
+`AuditRecord` (80 B) is defined in [§7 Audit & Halts](07-audit-and-halts.md)
+and is never sent over an MGEP session — it's emitted into the audit sink
+alone. Kill-switch actions are journaled as `AuditRecord.action =
+KillSwitchHalt/Resume`.

@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_imports)]
+
 //! Shared Memory Transport — Aeron-style IPC for ultra-low latency.
 //!
 //! Lock-free single-producer single-consumer (SPSC) ring buffer over
@@ -147,7 +147,6 @@ impl MmapMut {
 
         unsafe extern "C" {
             safe fn mmap(addr: *mut std::ffi::c_void, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut std::ffi::c_void;
-            safe fn munmap(addr: *mut std::ffi::c_void, len: usize) -> i32;
         }
 
         let ptr = mmap(
@@ -449,6 +448,7 @@ mod tests {
         // Write real MGEP messages
         let order = crate::messages::NewOrderSingleCore {
             order_id: 42, instrument_id: 7,
+            client_order_id: 0,
             side: 1, order_type: 2, time_in_force: 1,
             price: crate::types::Decimal::from_f64(100.0),
             quantity: crate::types::Decimal::from_f64(10.0),

@@ -51,7 +51,7 @@ impl PooledBuffer {
     /// Detach from pool — caller owns this buffer permanently.
     pub fn detach(mut self) -> Vec<u8> {
         self.pool = ptr::null();
-        let mut v = std::mem::replace(&mut self.data, Vec::new());
+        let mut v = std::mem::take(&mut self.data);
         v.truncate(self.len);
         std::mem::forget(self); // don't return to pool
         v
@@ -63,7 +63,7 @@ impl Drop for PooledBuffer {
         if !self.pool.is_null() {
             let pool = unsafe { &*self.pool };
             self.len = 0;
-            let buf = std::mem::replace(&mut self.data, Vec::new());
+            let buf = std::mem::take(&mut self.data);
             pool.return_buf(buf);
         }
     }
@@ -299,18 +299,21 @@ mod tests {
         // Encode MGEP message into pooled buffer
         let order = crate::messages::NewOrderSingleCore {
             order_id: 42, instrument_id: 7, side: 1, order_type: 2,
+            client_order_id: 0,
             time_in_force: 1, price: crate::types::Decimal::from_f64(100.0),
             quantity: crate::types::Decimal::from_f64(10.0),
             stop_price: crate::types::Decimal::NULL,
         };
 
-        // Encode directly into pooled buffer
+        // Encode directly into pooled buffer.
+        // Message size = 32 (FullHeader) + NewOrderSingleCore::SIZE.
+        let total_size = 32 + crate::messages::NewOrderSingleCore::SIZE;
         let header = crate::header::FullHeader::new(
-            0x0001, 0x01, 1, 1, 0, 72, crate::frame::FrameFlags::NONE,
+            0x0001, 0x01, 1, 1, 0, total_size as u32, crate::frame::FrameFlags::NONE,
         );
         header.write_to(buf.as_mut());
-        buf.as_mut()[32..72].copy_from_slice(order.as_bytes());
-        buf.set_len(72);
+        buf.as_mut()[32..total_size].copy_from_slice(order.as_bytes());
+        buf.set_len(total_size);
 
         // Decode from pooled buffer
         let decoded = crate::codec::MessageBuffer::decode_new_order(buf.as_slice());
@@ -318,7 +321,7 @@ mod tests {
 
         // detach to own the data
         let owned = buf.detach();
-        assert_eq!(owned.len(), 72);
+        assert_eq!(owned.len(), total_size);
     }
 
     #[test]

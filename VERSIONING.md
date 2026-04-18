@@ -1,14 +1,31 @@
 # MGEP Versioning & Compatibility
 
-## Wire Format Version
+## Protocol Version
 
 The `version` byte in the frame header identifies the wire format version. Current: **1**.
+The **spec release number** (0.2.0, 0.3.0, 1.0.0 …) is separate and tracked in `CHANGELOG.md`.
 
-## Compatibility Rules
+## Pre-1.0 Exception
+
+**Before `1.0.0`, the wire freeze in Rule 1 below does NOT apply.** The protocol is
+explicitly mutable across 0.x releases so early adopters and spec reviewers can
+reshape the core blocks as real integrations surface issues.
+
+Concretely: between `0.1.0` and `0.2.0` four core blocks grew (NewOrderSingle,
+ExecutionReport, OrderCancelReject, EstablishAck) and additional message types
+were added. See `CHANGELOG.md` — the `⚠️ Breaking wire changes` section of
+every 0.x release MUST enumerate every size delta and every new message type so
+deployers can bump all peers in lockstep.
+
+After the `1.0.0` tag, Rule 1 applies permanently: no more core-block surgery;
+schema evolution goes through the optional (flex) block, new message types, or
+a version bump with coordinated transition (Rule 7 below).
+
+## Compatibility Rules (post-1.0)
 
 ### Rule 1: Core Block Fields Are Frozen After Release
 
-Once a message type is released, its core block field order, types, and offsets NEVER change. This guarantees that a receiver can always decode a known message type without checking the version.
+Once a message type is released **in 1.0 or later**, its core block field order, types, and offsets NEVER change. This guarantees that a receiver can always decode a known message type without checking the version.
 
 ### Rule 2: New Fields Go to Optional Block
 
@@ -44,12 +61,21 @@ During session establishment:
 3. Implementations must still decode it but may ignore the value
 4. After 2 versions, the field ID / message type is retired (never reused)
 
-## Breaking Changes
+### Rule 7: Post-1.0 Breaking Changes (rare)
 
 If absolutely necessary (security fix, fundamental design flaw):
-1. Increment the `version` byte
-2. Document the migration in CHANGELOG.md
+1. Increment the `version` byte in the frame header
+2. Document the migration in CHANGELOG.md under `⚠️ Breaking wire changes`
 3. Provide a 6-month transition period where both versions are supported
 4. Old version support can be dropped after transition period
 
 Breaking changes require an MGEP Enhancement Proposal with explicit compatibility analysis.
+
+## Cargo Crate Versioning
+
+The Rust reference crate follows [Semantic Versioning](https://semver.org/):
+
+- `MAJOR.MINOR.PATCH`
+- Pre-1.0: `MINOR` bumps may include wire format breaks (per the exception above).
+- Post-1.0: `MAJOR` bumps correspond to wire-format-version increments (Rule 7).
+- `MINOR` bumps after 1.0 add message types / flex fields / modules but remain wire-compatible.

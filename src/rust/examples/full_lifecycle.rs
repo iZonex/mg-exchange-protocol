@@ -137,6 +137,7 @@ fn run_client(addr: std::net::SocketAddr) {
 
     let order = NewOrderSingleCore {
         order_id: 9999, instrument_id: 42, side: 1, order_type: 2,
+        client_order_id: 0,
         time_in_force: 1, price: Decimal::from_f64(200.0),
         quantity: Decimal::from_f64(50.0), stop_price: Decimal::NULL,
     };
@@ -251,6 +252,7 @@ fn run_mock_server(server: TcpServer) {
                 let order = NewOrderSingleCore::from_bytes(&msg[CORE_BLOCK_OFFSET..]);
                 let report = ExecutionReportCore {
                     order_id: order.order_id,
+                    client_order_id: 0,
                     exec_id: 5000 + order.order_id,
                     instrument_id: order.instrument_id,
                     side: order.side,

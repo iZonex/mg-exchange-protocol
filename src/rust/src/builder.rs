@@ -1,7 +1,7 @@
 //! Ergonomic Message Builders — fluent API for constructing MGEP messages.
 //!
 //! Instead of:
-//!   let order = NewOrderSingleCore { order_id: 42, instrument_id: 7, side: 1, ... };
+//!   let order = NewOrderSingleCore { order_id: 42, client_order_id: 0, instrument_id: 7, side: 1, ... };
 //!   let mut enc = MessageBuffer::with_capacity(256);
 //!   enc.encode(1, seq, &order, Some(&flex));
 //!
@@ -29,6 +29,7 @@ impl OrderBuilder {
         Self {
             core: NewOrderSingleCore {
                 order_id,
+                client_order_id: 0,
                 instrument_id,
                 side: Side::Buy as u8,
                 order_type: OrderType::Limit as u8,
@@ -68,6 +69,8 @@ impl OrderBuilder {
     pub fn tif_ioc(mut self) -> Self { self.core.time_in_force = TimeInForce::IOC as u16; self }
     pub fn tif_fok(mut self) -> Self { self.core.time_in_force = TimeInForce::FOK as u16; self }
     pub fn sender(mut self, id: u32) -> Self { self.sender_comp_id = id; self }
+    /// Set the client-assigned order ID. Required for idempotent retry.
+    pub fn client_order_id(mut self, id: u64) -> Self { self.core.client_order_id = id; self }
 
     // Flex fields
     pub fn account(mut self, account: &str) -> Self {
@@ -115,6 +118,7 @@ impl ExecReportBuilder {
         Self {
             core: ExecutionReportCore {
                 order_id,
+                client_order_id: 0,
                 exec_id,
                 instrument_id,
                 side: Side::Buy as u8,

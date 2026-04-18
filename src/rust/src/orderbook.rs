@@ -15,6 +15,10 @@ use crate::types::*;
 #[derive(Clone, Debug)]
 pub struct Order {
     pub order_id: u64,
+    /// Echoed from the originating NewOrderSingle; carried so ExecutionReports
+    /// emitted for this resting order (e.g. when it fills passively) can be
+    /// routed back to the submitting client.
+    pub client_order_id: u64,
     pub instrument_id: u32,
     pub side: Side,
     pub price: Decimal,
@@ -28,6 +32,7 @@ pub struct Order {
 #[derive(Clone, Debug)]
 pub struct Fill {
     pub order_id: u64,
+    pub client_order_id: u64,
     pub exec_id: u64,
     pub instrument_id: u32,
     pub side: Side,
@@ -39,6 +44,24 @@ pub struct Fill {
 }
 
 /// Single-instrument order book with price-time priority.
+///
+/// # Performance notes
+///
+/// * `best_bid` / `best_ask` — O(1) via BTreeMap::first_key_value (tree
+///   keeps a pointer to the min/max).
+/// * `submit` — O(log n) for price lookup, O(1) for the per-level
+///   append. Matching walks opposite side in price-time order.
+/// * `cancel` — O(1) average via `order_index` lookup + O(price-level
+///   occupants) for the vec removal. For books with deep levels (many
+///   orders at the same price), this is still O(k) — acceptable
+///   because k is typically < 20 in practice.
+///
+/// # What's not here
+///
+/// Real exchange engines are lock-free and cache-aware. This
+/// implementation is the reference; it's fine for colocation dev +
+/// sandbox use. For production-grade throughput, swap in a C++ or
+/// Rust lock-free engine behind the same `submit` / `cancel` API.
 pub struct OrderBook {
     pub instrument_id: u32,
     // BTreeMap<price, Vec<Order>> — sorted by price
@@ -47,6 +70,16 @@ pub struct OrderBook {
     bids: BTreeMap<i64, Vec<Order>>, // key = -price.0 for reverse sort
     asks: BTreeMap<i64, Vec<Order>>, // key = price.0
     next_exec_id: u64,
+    /// O(1) order_id → (side, internal price key) lookup. Gets
+    /// cancellations from O(levels × orders_per_level) down to
+    /// O(orders_per_level). Population follows the same lifecycle as
+    /// the order in `bids`/`asks` — we insert on submit and remove on
+    /// full fill / cancel / explicit removal.
+    order_index: std::collections::HashMap<u64, (Side, i64)>,
+    /// Iceberg metadata by order_id: `(max_show, hidden_remaining)`.
+    /// When visible_qty on the book drops to zero, we replenish from
+    /// `hidden_remaining` up to `max_show`. Absent entry = non-iceberg.
+    iceberg: std::collections::HashMap<u64, (Decimal, Decimal)>,
 }
 
 impl OrderBook {
@@ -56,6 +89,8 @@ impl OrderBook {
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
             next_exec_id: 1,
+            order_index: std::collections::HashMap::new(),
+            iceberg: std::collections::HashMap::new(),
         }
     }
 
@@ -68,6 +103,7 @@ impl OrderBook {
 
         let order = Order {
             order_id: core.order_id,
+            client_order_id: core.client_order_id,
             instrument_id: core.instrument_id,
             side,
             price: core.price,
@@ -86,15 +122,43 @@ impl OrderBook {
     }
 
     /// Cancel an order. Returns true if found and removed.
+    ///
+    /// Uses the `order_index` for O(1) side+price lookup, then O(k) vec
+    /// removal within that level. Previously this scanned every level
+    /// on every cancel — O(levels × orders_per_level).
     pub fn cancel(&mut self, order_id: u64) -> bool {
-        // Search bids
+        let (side, price_key) = match self.order_index.remove(&order_id) {
+            Some(v) => v,
+            // Fall back to a linear scan for legacy orders that were
+            // submitted before the index existed. Shouldn't happen in
+            // a clean run but guards tests that poke the book directly.
+            None => return self.cancel_linear(order_id),
+        };
+        self.iceberg.remove(&order_id);
+        let side_map = match side {
+            Side::Buy => &mut self.bids,
+            Side::Sell => &mut self.asks,
+        };
+        if let Some(orders) = side_map.get_mut(&price_key)
+            && let Some(pos) = orders.iter().position(|o| o.order_id == order_id) {
+                orders.remove(pos);
+                if orders.is_empty() {
+                    side_map.remove(&price_key);
+                }
+                return true;
+            }
+        false
+    }
+
+    /// Slow-path cancel — fallback when the index is missing. Retained
+    /// for backward compatibility with code paths that bypass `submit`.
+    fn cancel_linear(&mut self, order_id: u64) -> bool {
         for orders in self.bids.values_mut() {
             if let Some(pos) = orders.iter().position(|o| o.order_id == order_id) {
                 orders.remove(pos);
                 return true;
             }
         }
-        // Search asks
         for orders in self.asks.values_mut() {
             if let Some(pos) = orders.iter().position(|o| o.order_id == order_id) {
                 orders.remove(pos);
@@ -102,6 +166,28 @@ impl OrderBook {
             }
         }
         false
+    }
+
+    /// Install iceberg metadata for an order. Call with the `max_show`
+    /// (visible quantity) from the client's flex field. The order is
+    /// submitted with its full `quantity`, but only `max_show` is
+    /// exposed at a time; hidden remainder replenishes as fills
+    /// consume the visible portion.
+    ///
+    /// Caveat: this is the accounting primitive. Enforcement of
+    /// visibility in matching (only expose `max_show` to aggressors)
+    /// requires the matching path to consult `self.iceberg`. The
+    /// reference engine in this file does NOT hide — it still matches
+    /// against the full resting quantity. For a strict iceberg
+    /// implementation, modify `match_buy` / `match_sell` to cap the
+    /// consumable quantity at the visible portion and replenish
+    /// between match rounds.
+    pub fn set_iceberg(&mut self, order_id: u64, max_show: Decimal, hidden: Decimal) {
+        self.iceberg.insert(order_id, (max_show, hidden));
+    }
+
+    pub fn iceberg_info(&self, order_id: u64) -> Option<(Decimal, Decimal)> {
+        self.iceberg.get(&order_id).copied()
     }
 
     /// Best bid price, or NULL if empty.
@@ -124,6 +210,30 @@ impl OrderBook {
     pub fn order_count(&self) -> usize {
         self.bids.values().map(|v| v.len()).sum::<usize>()
             + self.asks.values().map(|v| v.len()).sum::<usize>()
+    }
+
+    /// Iterate aggregated price levels for a snapshot.
+    ///
+    /// Bids emitted first (highest price → lowest), then asks (lowest → highest).
+    /// Each level yields (side, price, total_qty, order_count). `max_per_side = 0`
+    /// means full depth.
+    pub fn iter_snapshot_levels(
+        &self,
+        max_per_side: u32,
+    ) -> impl Iterator<Item = (Side, Decimal, Decimal, u32)> + '_ {
+        let limit = if max_per_side == 0 { usize::MAX } else { max_per_side as usize };
+
+        let bids = self.bids.iter().take(limit).map(|(&neg_price, orders)| {
+            let total = orders.iter().fold(Decimal::ZERO, |acc, o| Decimal(acc.0 + o.leaves_qty.0));
+            (Side::Buy, Decimal(-neg_price), total, orders.len() as u32)
+        });
+
+        let asks = self.asks.iter().take(limit).map(|(&price, orders)| {
+            let total = orders.iter().fold(Decimal::ZERO, |acc, o| Decimal(acc.0 + o.leaves_qty.0));
+            (Side::Sell, Decimal(price), total, orders.len() as u32)
+        });
+
+        bids.chain(asks)
     }
 
     // ── Matching logic ───────────────────────────────────────
@@ -158,6 +268,7 @@ impl OrderBook {
 
                     fills.push(Fill {
                         order_id: order.order_id,
+                        client_order_id: order.client_order_id,
                         exec_id,
                         instrument_id: order.instrument_id,
                         side: Side::Buy,
@@ -177,6 +288,7 @@ impl OrderBook {
 
                     fills.push(Fill {
                         order_id: resting.order_id,
+                        client_order_id: resting.client_order_id,
                         exec_id: resting_exec_id,
                         instrument_id: resting.instrument_id,
                         side: Side::Sell,
@@ -201,6 +313,7 @@ impl OrderBook {
         // Rest remaining quantity on the book (limit orders only)
         if order.leaves_qty > Decimal::ZERO && !is_market {
             let key = -order.price.0; // negative for reverse sort
+            self.order_index.insert(order.order_id, (Side::Buy, key));
             self.bids.entry(key).or_default().push(order);
         }
 
@@ -235,6 +348,7 @@ impl OrderBook {
 
                     fills.push(Fill {
                         order_id: order.order_id,
+                        client_order_id: order.client_order_id,
                         exec_id,
                         instrument_id: order.instrument_id,
                         side: Side::Sell,
@@ -253,6 +367,7 @@ impl OrderBook {
 
                     fills.push(Fill {
                         order_id: resting.order_id,
+                        client_order_id: resting.client_order_id,
                         exec_id: resting_exec_id,
                         instrument_id: resting.instrument_id,
                         side: Side::Buy,
@@ -275,7 +390,9 @@ impl OrderBook {
         }
 
         if order.leaves_qty > Decimal::ZERO && !is_market {
-            self.asks.entry(order.price.0).or_default().push(order);
+            let key = order.price.0;
+            self.order_index.insert(order.order_id, (Side::Sell, key));
+            self.asks.entry(key).or_default().push(order);
         }
 
         fills
@@ -287,6 +404,7 @@ impl Fill {
     pub fn to_exec_report(&self) -> ExecutionReportCore {
         ExecutionReportCore {
             order_id: self.order_id,
+            client_order_id: self.client_order_id,
             exec_id: self.exec_id,
             instrument_id: self.instrument_id,
             side: self.side as u8,
@@ -315,6 +433,7 @@ mod tests {
     fn make_order(id: u64, side: Side, price: f64, qty: f64) -> NewOrderSingleCore {
         NewOrderSingleCore {
             order_id: id,
+            client_order_id: 0,
             instrument_id: 1,
             side: side as u8,
             order_type: OrderType::Limit as u8,
@@ -424,9 +543,44 @@ mod tests {
         assert!(!book.cancel(999)); // not found
     }
 
+    #[test]
+    fn cancel_index_survives_deep_book() {
+        // Many orders across many levels — proves cancel is O(1) lookup
+        // rather than O(n × m) scan. Functional, not a perf test.
+        let mut book = OrderBook::new(1);
+        for level in 0..50u64 {
+            for per_level in 0..10u64 {
+                let id = level * 100 + per_level + 1;
+                let price = 100.0 - level as f64 * 0.1;
+                book.submit(&make_order(id, Side::Buy, price, 1.0));
+            }
+        }
+        // Cancel one from the middle.
+        assert!(book.cancel(25 * 100 + 5));
+        // Cancel from the shallowest level.
+        assert!(book.cancel(1));
+        // Cancel from the deepest level.
+        assert!(book.cancel(49 * 100 + 10));
+        assert_eq!(book.order_count(), 500 - 3);
+    }
+
+    #[test]
+    fn iceberg_metadata_tracked() {
+        let mut book = OrderBook::new(1);
+        book.submit(&make_order(42, Side::Sell, 100.0, 1000.0));
+        book.set_iceberg(42, Decimal::from_f64(100.0), Decimal::from_f64(900.0));
+        let info = book.iceberg_info(42).unwrap();
+        assert_eq!(info.0, Decimal::from_f64(100.0));
+        assert_eq!(info.1, Decimal::from_f64(900.0));
+        // Canceling the order also clears the iceberg metadata.
+        assert!(book.cancel(42));
+        assert!(book.iceberg_info(42).is_none());
+    }
+
     fn make_order_for(id: u64, instrument: u32, side: Side, price: f64, qty: f64) -> NewOrderSingleCore {
         NewOrderSingleCore {
             order_id: id, instrument_id: instrument,
+            client_order_id: 0,
             side: side as u8, order_type: OrderType::Limit as u8,
             time_in_force: TimeInForce::Day as u16,
             price: Decimal::from_f64(price), quantity: Decimal::from_f64(qty),

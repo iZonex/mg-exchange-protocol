@@ -458,7 +458,7 @@ fn sha1(data: &[u8]) -> [u8; 20] {
 const B64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn base64_encode(data: &[u8]) -> String {
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
     let chunks = data.chunks(3);
 
     for chunk in chunks {
@@ -538,6 +538,7 @@ mod tests {
         // Encode a real MGEP message into WS frame
         let order = crate::messages::NewOrderSingleCore {
             order_id: 42, instrument_id: 7, side: 1, order_type: 2,
+            client_order_id: 0,
             time_in_force: 1, price: crate::types::Decimal::from_f64(100.0),
             quantity: crate::types::Decimal::from_f64(10.0),
             stop_price: crate::types::Decimal::NULL,
@@ -605,6 +606,7 @@ mod tests {
         // Build and send MGEP order
         let order = crate::messages::NewOrderSingleCore {
             order_id: 123, instrument_id: 1, side: 1, order_type: 2,
+            client_order_id: 0,
             time_in_force: 1, price: crate::types::Decimal::from_f64(50.0),
             quantity: crate::types::Decimal::from_f64(10.0),
             stop_price: crate::types::Decimal::NULL,

@@ -62,6 +62,11 @@ impl_core_block!(SubscribeResponseCore);
 impl_core_block!(MarketStatisticsCore);
 impl_core_block!(SecurityListRequestCore);
 impl_core_block!(SecurityListResponseCore);
+impl_core_block!(BookSnapshotRequestCore);
+impl_core_block!(BookSnapshotBeginCore);
+impl_core_block!(BookSnapshotLevelCore);
+impl_core_block!(BookSnapshotEndCore);
+impl_core_block!(BookSnapshotRejectCore);
 // Quotes (0x0003)
 impl_core_block!(QuoteRequestCore);
 impl_core_block!(QuoteCore);
@@ -394,6 +399,7 @@ mod tests {
     fn encode_decode_new_order() {
         let order = NewOrderSingleCore {
             order_id: 999,
+            client_order_id: 0,
             instrument_id: 42,
             side: Side::Buy as u8,
             order_type: OrderType::Limit as u8,
@@ -406,15 +412,16 @@ mod tests {
         let mut buffer = MessageBuffer::with_capacity(256);
         let written = buffer.encode(1, 1, &order, None);
 
-        // 32 header + 40 core = 72 bytes
-        assert_eq!(written, 72);
+        // 32 header + 48 core = 80 bytes
+        let expected = 32 + NewOrderSingleCore::SIZE;
+        assert_eq!(written, expected);
 
         let msg = buffer.as_slice();
 
         // Verify headers
         let full = MessageBuffer::decode_full_header(msg);
         assert!(full.frame.is_valid());
-        assert_eq!(full.frame.message_size, 72); // 32 header + 40 core
+        assert_eq!(full.frame.message_size as usize, expected);
         assert_eq!(full.message.schema_id, 0x0001);
         assert!(!full.frame.flags.has_flex());
         assert_eq!(full.message.message_type, 0x01);
@@ -436,6 +443,7 @@ mod tests {
     fn encode_with_flex() {
         let order = NewOrderSingleCore {
             order_id: 1,
+            client_order_id: 0,
             instrument_id: 1,
             side: Side::Sell as u8,
             order_type: OrderType::Market as u8,
@@ -468,6 +476,7 @@ mod tests {
     fn generic_encode_execution_report() {
         let report = ExecutionReportCore {
             order_id: 42,
+            client_order_id: 0,
             exec_id: 100,
             instrument_id: 7,
             side: Side::Buy as u8,
@@ -555,6 +564,7 @@ mod tests {
         // NewOrder
         let order = NewOrderSingleCore {
             order_id: 42,
+            client_order_id: 0,
             instrument_id: 1,
             side: Side::Buy as u8,
             order_type: OrderType::Limit as u8,
@@ -623,6 +633,7 @@ mod tests {
         // Valid header but no core block data
         let order = NewOrderSingleCore {
             order_id: 1, instrument_id: 1, side: 1, order_type: 1,
+            client_order_id: 0,
             time_in_force: 1, price: Decimal::ZERO, quantity: Decimal::ZERO,
             stop_price: Decimal::NULL,
         };
@@ -658,12 +669,12 @@ mod tests {
         }
 
         assert!(NewOrderSingleCore::try_from_bytes(&[]).is_none());
-        assert!(NewOrderSingleCore::try_from_bytes(&vec![0u8; 39]).is_none());
-        assert!(NewOrderSingleCore::try_from_bytes(&vec![0u8; 40]).is_some());
+        assert!(NewOrderSingleCore::try_from_bytes(&vec![0u8; NewOrderSingleCore::SIZE - 1]).is_none());
+        assert!(NewOrderSingleCore::try_from_bytes(&vec![0u8; NewOrderSingleCore::SIZE]).is_some());
 
         assert!(ExecutionReportCore::try_from_bytes(&[]).is_none());
-        assert!(ExecutionReportCore::try_from_bytes(&vec![0u8; 79]).is_none());
-        assert!(ExecutionReportCore::try_from_bytes(&vec![0u8; 80]).is_some());
+        assert!(ExecutionReportCore::try_from_bytes(&vec![0u8; ExecutionReportCore::SIZE - 1]).is_none());
+        assert!(ExecutionReportCore::try_from_bytes(&vec![0u8; ExecutionReportCore::SIZE]).is_some());
 
         assert!(RejectCore::try_from_bytes(&[]).is_none());
         assert!(RejectCore::try_from_bytes(&vec![0u8; 7]).is_none());
@@ -687,6 +698,7 @@ mod tests {
     fn legacy_encode_new_order_still_works() {
         let order = NewOrderSingleCore {
             order_id: 1,
+            client_order_id: 0,
             instrument_id: 1,
             side: Side::Buy as u8,
             order_type: OrderType::Limit as u8,
@@ -697,6 +709,6 @@ mod tests {
         };
         let mut buf = MessageBuffer::with_capacity(256);
         let len = buf.encode_new_order(1, 1, &order, None);
-        assert_eq!(len, 72);
+        assert_eq!(len, 32 + NewOrderSingleCore::SIZE);
     }
 }

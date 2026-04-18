@@ -8,6 +8,7 @@ use mgep::types::*;
 fn make_order() -> NewOrderSingleCore {
     NewOrderSingleCore {
         order_id: 123456789, instrument_id: 42,
+        client_order_id: 0,
         side: Side::Buy as u8, order_type: OrderType::Limit as u8,
         time_in_force: TimeInForce::IOC as u16,
         price: Decimal::from_f64(150.25), quantity: Decimal::from_f64(100.0),
@@ -27,7 +28,7 @@ fn bench_aes_gcm_encrypt(c: &mut Criterion) {
         b.iter(|| {
             let mut buf = [0u8; 256];
             buf[..msg_len].copy_from_slice(codec.as_slice());
-            black_box(mgep::crypto::encrypt_message(
+            let _ = black_box(mgep::crypto::encrypt_message(
                 &mut buf, msg_len, &cipher, 1, 1, black_box(1),
             ));
         });
@@ -50,7 +51,7 @@ fn bench_aes_gcm_decrypt(c: &mut Criterion) {
         b.iter(|| {
             let mut buf = [0u8; 256];
             buf[..enc_len].copy_from_slice(&encrypted[..enc_len]);
-            black_box(mgep::crypto::decrypt_message(
+            let _ = black_box(mgep::crypto::decrypt_message(
                 &mut buf, enc_len, &cipher, 1, 1, 1,
             ));
         });
@@ -135,6 +136,7 @@ fn bench_orderbook_insert(c: &mut Criterion) {
             for i in 0..100u64 {
                 let order = NewOrderSingleCore {
                     order_id: i, instrument_id: 1,
+                    client_order_id: 0,
                     side: if i % 2 == 0 { 1 } else { 2 },
                     order_type: OrderType::Limit as u8,
                     time_in_force: TimeInForce::Day as u16,
@@ -158,6 +160,7 @@ fn bench_orderbook_match(c: &mut Criterion) {
                 for i in 0..50u64 {
                     let sell = NewOrderSingleCore {
                         order_id: i, instrument_id: 1, side: 2,
+                        client_order_id: 0,
                         order_type: 2, time_in_force: 1,
                         price: Decimal::from_f64(100.0 + i as f64),
                         quantity: Decimal::from_f64(10.0),
@@ -168,6 +171,7 @@ fn bench_orderbook_match(c: &mut Criterion) {
                 // Aggressive buy sweeps
                 let buy = NewOrderSingleCore {
                     order_id: 999, instrument_id: 1, side: 1,
+                    client_order_id: 0,
                     order_type: 2, time_in_force: 1,
                     price: Decimal::from_f64(200.0),
                     quantity: Decimal::from_f64(500.0),

@@ -199,11 +199,10 @@ impl AsyncServer {
         let mut sent = 0;
         let tokens: Vec<usize> = self.active.keys().copied().collect();
         for t in tokens {
-            if let Some(client) = self.active.get_mut(&t) {
-                if client.transport.send(msg).is_ok() {
+            if let Some(client) = self.active.get_mut(&t)
+                && client.transport.send(msg).is_ok() {
                     sent += 1;
                 }
-            }
         }
         self.metrics.record_send(msg.len() * sent);
         sent
@@ -412,24 +411,21 @@ impl AsyncServer {
                 let active_token = self.next_active_id;
                 self.next_active_id += 1;
 
-                match TcpTransport::from_stream(client.stream) {
-                    Ok(transport) => {
-                        let _ = transport.set_nonblocking(true);
-                        let _ = self.reactor.register(
-                            transport.inner().as_raw_fd(),
-                            active_token,
-                            Interest::READABLE,
-                        );
-                        self.active.insert(active_token, ActiveClient {
-                            transport,
-                            session: client.session,
-                            addr: client.addr,
-                            last_activity: Instant::now(),
-                            tokens: self.config.rate_limit_per_sec,
-                            last_refill: Instant::now(),
-                        });
-                    }
-                    Err(_) => {}
+                if let Ok(transport) = TcpTransport::from_stream(client.stream) {
+                    let _ = transport.set_nonblocking(true);
+                    let _ = self.reactor.register(
+                        transport.inner().as_raw_fd(),
+                        active_token,
+                        Interest::READABLE,
+                    );
+                    self.active.insert(active_token, ActiveClient {
+                        transport,
+                        session: client.session,
+                        addr: client.addr,
+                        last_activity: Instant::now(),
+                        tokens: self.config.rate_limit_per_sec,
+                        last_refill: Instant::now(),
+                    });
                 }
             }
         }
@@ -457,12 +453,11 @@ impl AsyncServer {
         let mut processed = 0;
 
         // Rate limit refill
-        if self.config.rate_limit_per_sec > 0 {
-            if client.last_refill.elapsed() >= Duration::from_secs(1) {
+        if self.config.rate_limit_per_sec > 0
+            && client.last_refill.elapsed() >= Duration::from_secs(1) {
                 client.tokens = self.config.rate_limit_per_sec;
                 client.last_refill = Instant::now();
             }
-        }
 
         loop {
             match client.transport.recv() {
@@ -567,6 +562,7 @@ mod tests {
             let seq = conn.session_mut().next_seq();
             let order = NewOrderSingleCore {
                 order_id: 999, instrument_id: 7, side: 1, order_type: 2,
+                client_order_id: 0,
                 time_in_force: 1, price: Decimal::from_f64(100.0),
                 quantity: Decimal::from_f64(10.0), stop_price: Decimal::NULL,
             };
@@ -650,6 +646,7 @@ mod tests {
                     let seq = conn.session_mut().next_seq();
                     let order = NewOrderSingleCore {
                         order_id: i * 1000 + j, instrument_id: 1, side: 1,
+                        client_order_id: 0,
                         order_type: 2, time_in_force: 1,
                         price: Decimal::from_f64(100.0),
                         quantity: Decimal::from_f64(1.0),

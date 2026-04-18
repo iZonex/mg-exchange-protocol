@@ -14,6 +14,7 @@ use mgep::types::*;
 fn rust_encode_new_order() -> (Vec<u8>, String) {
     let order = NewOrderSingleCore {
         order_id: 42,
+        client_order_id: 0,
         instrument_id: 7,
         side: Side::Buy as u8,
         order_type: OrderType::Limit as u8,

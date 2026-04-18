@@ -276,6 +276,7 @@ mod tests {
         // Build a minimal message
         let order = crate::messages::NewOrderSingleCore {
             order_id: 1,
+            client_order_id: 0,
             instrument_id: 42,
             side: crate::types::Side::Buy as u8,
             order_type: crate::types::OrderType::Limit as u8,

@@ -61,6 +61,24 @@ MSG_CANCEL_REJECT = 0x06
 MSG_ORDER_STATUS_REQUEST = 0x07
 MSG_MASS_CANCEL_REPORT = 0x08
 MSG_NEW_ORDER_CROSS = 0x09
+MSG_BUSINESS_REJECT = 0x11
+
+# Market-data message types
+MSG_BOOK_SNAPSHOT_REQUEST = 0x30
+MSG_BOOK_SNAPSHOT_BEGIN = 0x31
+MSG_BOOK_SNAPSHOT_LEVEL = 0x32
+MSG_BOOK_SNAPSHOT_END = 0x33
+MSG_BOOK_SNAPSHOT_REJECT = 0x34
+
+# Session message types
+MSG_HEARTBEAT = 0x05
+MSG_RETRANSMIT_REQUEST = 0x06
+MSG_RETRANSMISSION = 0x07
+MSG_TERMINATE = 0x08
+MSG_SEQUENCE_RESET = 0x0B
+MSG_CLOCK_STATUS = 0x0E
+MSG_KEY_ROTATION_REQUEST = 0x0F
+MSG_KEY_ROTATION_ACK = 0x10
 
 # Enums
 SIDE_BUY = 1
@@ -161,10 +179,11 @@ class FullHeader(LittleEndianStructure):
 # ═══════════════════════════════════════════════
 
 class NewOrderSingle(LittleEndianStructure):
-    """NewOrderSingle core block — 40 bytes."""
+    """NewOrderSingle core block — 48 bytes."""
     _pack_ = 1
     _fields_ = [
         ("order_id", c_uint64),
+        ("client_order_id", c_uint64),
         ("instrument_id", c_uint32),
         ("side", c_uint8),
         ("order_type", c_uint8),
@@ -174,7 +193,7 @@ class NewOrderSingle(LittleEndianStructure):
         ("stop_price", c_int64),
     ]
 
-    SIZE = 40
+    SIZE = 48
 
     def price_as_float(self):
         return None if self.price == DECIMAL_NULL else self.price / DECIMAL_SCALE
@@ -195,10 +214,11 @@ class NewOrderSingle(LittleEndianStructure):
 
 
 class ExecutionReport(LittleEndianStructure):
-    """ExecutionReport core block — 80 bytes."""
+    """ExecutionReport core block — 88 bytes."""
     _pack_ = 1
     _fields_ = [
         ("order_id", c_uint64),
+        ("client_order_id", c_uint64),
         ("exec_id", c_uint64),
         ("instrument_id", c_uint32),
         ("side", c_uint8),
@@ -214,7 +234,7 @@ class ExecutionReport(LittleEndianStructure):
         ("transact_time", c_uint64),
     ]
 
-    SIZE = 80
+    SIZE = 88
 
     def last_px_as_float(self):
         return None if self.last_px == DECIMAL_NULL else self.last_px / DECIMAL_SCALE
@@ -255,16 +275,170 @@ def encode_header(schema_id, message_type, sender_comp_id, sequence_num,
 def encode_new_order(order_id, instrument_id, side, order_type,
                      price=None, quantity=0.0, stop_price=None,
                      time_in_force=TIF_DAY, sender_comp_id=1,
-                     sequence_num=1, correlation_id=0):
-    """Encode a complete NewOrderSingle message."""
-    core = struct.pack('<QIBBh qqq',
-        order_id, instrument_id, side, order_type, time_in_force,
+                     sequence_num=1, correlation_id=0, client_order_id=0):
+    """Encode a complete NewOrderSingle message.
+
+    `client_order_id` is the client-assigned unique order ID used for
+    idempotent retry (see spec §6 "Order Entry Reliability"). Pass a unique
+    u64 per submission; repeated submissions with the same value within the
+    server's dedup window will return the original response.
+    """
+    core = struct.pack('<QQIBBh qqq',
+        order_id, client_order_id, instrument_id, side, order_type, time_in_force,
         _decimal(price), _decimal(quantity), _decimal(stop_price))
 
     total = FULL_HEADER_SIZE + len(core)
     header = encode_header(SCHEMA_TRADING, MSG_NEW_ORDER,
                           sender_comp_id, sequence_num, correlation_id, total)
     return header + core
+
+
+# ═══════════════════════════════════════════════
+# Market-data: snapshot recovery (schema 0x0002)
+# ═══════════════════════════════════════════════
+
+class BookSnapshotRequest(LittleEndianStructure):
+    """BookSnapshotRequest core block — 16 bytes."""
+    _pack_ = 1
+    _fields_ = [
+        ("request_id", c_uint64),
+        ("instrument_id", c_uint32),
+        ("max_levels", c_uint32),
+    ]
+    SIZE = 16
+
+    @classmethod
+    def from_buffer(cls, buf, offset=CORE_BLOCK_OFFSET):
+        return cls.from_buffer_copy(buf[offset:offset + cls.SIZE])
+
+
+class BookSnapshotBegin(LittleEndianStructure):
+    """BookSnapshotBegin core block — 40 bytes."""
+    _pack_ = 1
+    _fields_ = [
+        ("request_id", c_uint64),
+        ("instrument_id", c_uint32),
+        ("_pad", c_uint8 * 4),
+        ("last_applied_seq", c_uint64),
+        ("level_count", c_uint32),
+        ("_pad2", c_uint8 * 4),
+        ("snapshot_id", c_uint64),
+    ]
+    SIZE = 40
+
+    @classmethod
+    def from_buffer(cls, buf, offset=CORE_BLOCK_OFFSET):
+        return cls.from_buffer_copy(buf[offset:offset + cls.SIZE])
+
+
+class BookSnapshotLevel(LittleEndianStructure):
+    """BookSnapshotLevel core block — 40 bytes."""
+    _pack_ = 1
+    _fields_ = [
+        ("snapshot_id", c_uint64),
+        ("level_index", c_uint32),
+        ("side", c_uint8),
+        ("_pad", c_uint8 * 3),
+        ("price", c_int64),
+        ("quantity", c_int64),
+        ("order_count", c_uint32),
+        ("_pad2", c_uint8 * 4),
+    ]
+    SIZE = 40
+
+    @classmethod
+    def from_buffer(cls, buf, offset=CORE_BLOCK_OFFSET):
+        return cls.from_buffer_copy(buf[offset:offset + cls.SIZE])
+
+    def price_as_float(self):
+        return None if self.price == DECIMAL_NULL else self.price / DECIMAL_SCALE
+
+
+class BookSnapshotEnd(LittleEndianStructure):
+    """BookSnapshotEnd core block — 32 bytes."""
+    _pack_ = 1
+    _fields_ = [
+        ("snapshot_id", c_uint64),
+        ("final_seq", c_uint64),
+        ("checksum", c_uint64),
+        ("level_count", c_uint32),
+        ("_pad", c_uint8 * 4),
+    ]
+    SIZE = 32
+
+    @classmethod
+    def from_buffer(cls, buf, offset=CORE_BLOCK_OFFSET):
+        return cls.from_buffer_copy(buf[offset:offset + cls.SIZE])
+
+
+# ═══════════════════════════════════════════════
+# Session-layer messages (schema 0x0000)
+# ═══════════════════════════════════════════════
+
+class ClockStatus(LittleEndianStructure):
+    """ClockStatus core block — 40 bytes."""
+    _pack_ = 1
+    _fields_ = [
+        ("source", c_uint8),
+        ("quality", c_uint8),
+        ("_pad", c_uint8 * 6),
+        ("observed_at", c_uint64),
+        ("last_sync", c_uint64),
+        ("estimated_drift_ns", c_uint64),
+        ("reference_clock_id", c_uint64),
+    ]
+    SIZE = 40
+
+    @classmethod
+    def from_buffer(cls, buf, offset=CORE_BLOCK_OFFSET):
+        return cls.from_buffer_copy(buf[offset:offset + cls.SIZE])
+
+    def is_regulatory_grade(self):
+        # Quality code 1 == RegulatoryGrade in the Rust impl.
+        return self.quality == 1
+
+
+class KeyRotationRequest(LittleEndianStructure):
+    """KeyRotationRequest core block — 16 bytes."""
+    _pack_ = 1
+    _fields_ = [
+        ("session_id", c_uint64),
+        ("next_epoch", c_uint32),
+        ("reason", c_uint8),
+        ("_pad", c_uint8 * 3),
+    ]
+    SIZE = 16
+
+
+class KeyRotationAck(LittleEndianStructure):
+    """KeyRotationAck core block — 16 bytes."""
+    _pack_ = 1
+    _fields_ = [
+        ("session_id", c_uint64),
+        ("epoch", c_uint32),
+        ("status", c_uint8),
+        ("_pad", c_uint8 * 3),
+    ]
+    SIZE = 16
+
+
+class BusinessReject(LittleEndianStructure):
+    """BusinessReject core block — 16 bytes. Followed by optional flex
+    `text` (field_id=1) with a machine-readable reason code like
+    `rate_limited:session_msgs` or `halt:instrument:42`."""
+    _pack_ = 1
+    _fields_ = [
+        ("ref_seq_num", c_uint32),
+        ("ref_msg_type", c_uint8),
+        ("business_reason", c_uint8),
+        ("_pad", c_uint8 * 2),
+        ("order_id", c_uint64),
+    ]
+    SIZE = 16
+
+    @classmethod
+    def from_buffer(cls, buf, offset=CORE_BLOCK_OFFSET):
+        return cls.from_buffer_copy(buf[offset:offset + cls.SIZE])
 
 
 def decode_message(buf):
@@ -279,6 +453,14 @@ def decode_message(buf):
     dispatch = {
         (SCHEMA_TRADING, MSG_NEW_ORDER): NewOrderSingle,
         (SCHEMA_TRADING, MSG_EXECUTION_REPORT): ExecutionReport,
+        (SCHEMA_TRADING, MSG_BUSINESS_REJECT): BusinessReject,
+        (SCHEMA_MARKET_DATA, MSG_BOOK_SNAPSHOT_REQUEST): BookSnapshotRequest,
+        (SCHEMA_MARKET_DATA, MSG_BOOK_SNAPSHOT_BEGIN): BookSnapshotBegin,
+        (SCHEMA_MARKET_DATA, MSG_BOOK_SNAPSHOT_LEVEL): BookSnapshotLevel,
+        (SCHEMA_MARKET_DATA, MSG_BOOK_SNAPSHOT_END): BookSnapshotEnd,
+        (SCHEMA_SESSION, MSG_CLOCK_STATUS): ClockStatus,
+        (SCHEMA_SESSION, MSG_KEY_ROTATION_REQUEST): KeyRotationRequest,
+        (SCHEMA_SESSION, MSG_KEY_ROTATION_ACK): KeyRotationAck,
     }
 
     key = (header.schema_id, header.message_type)
@@ -287,6 +469,38 @@ def decode_message(buf):
         return header, cls.from_buffer(buf)
 
     return header, None
+
+
+def parse_flex_string(buf, core_size, field_id=1):
+    """Extract an optional flex string from a message buffer.
+
+    MGEP flex: `[count:u16][(id:u16, offset:u16)*][data area]`.
+    `core_size` is the size of the message's core block so we know
+    where flex starts. Returns `None` if the field is absent.
+    """
+    flex_start = CORE_BLOCK_OFFSET + core_size
+    if len(buf) < flex_start + 2:
+        return None
+    count = struct.unpack_from("<H", buf, flex_start)[0]
+    # Clamp — reader-side hard cap mirrors MAX_FLEX_FIELDS in Rust.
+    count = min(count, 32)
+    entries = flex_start + 2
+    data = entries + count * 4
+    for i in range(count):
+        fid, foff = struct.unpack_from("<HH", buf, entries + i * 4)
+        if fid == field_id:
+            # Type tag is 1 byte (FlexType::String = 0x0B), then u16 length.
+            pos = data + foff
+            if pos + 3 > len(buf):
+                return None
+            if buf[pos] != 0x0B:
+                return None
+            slen = struct.unpack_from("<H", buf, pos + 1)[0]
+            start = pos + 3
+            if start + slen > len(buf):
+                return None
+            return buf[start:start + slen].decode("utf-8", errors="replace")
+    return None
 
 
 # ═══════════════════════════════════════════════

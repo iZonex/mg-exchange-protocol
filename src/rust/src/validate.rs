@@ -188,6 +188,7 @@ mod tests {
     fn valid_new_order_passes() {
         let order = NewOrderSingleCore {
             order_id: 1, instrument_id: 42, side: 1, order_type: 2,
+            client_order_id: 0,
             time_in_force: 1, price: Decimal::from_f64(100.0),
             quantity: Decimal::from_f64(10.0), stop_price: Decimal::NULL,
         };
@@ -201,6 +202,7 @@ mod tests {
     fn invalid_new_order_caught() {
         let order = NewOrderSingleCore {
             order_id: 0,  // invalid
+            client_order_id: 0,
             instrument_id: 0, // invalid
             side: 5,  // invalid
             order_type: 2,

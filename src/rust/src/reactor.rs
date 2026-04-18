@@ -475,6 +475,7 @@ mod tests {
         // Send MGEP message via raw socket
         let order = crate::messages::NewOrderSingleCore {
             order_id: 42, instrument_id: 7, side: 1, order_type: 2,
+            client_order_id: 0,
             time_in_force: 1, price: crate::types::Decimal::from_f64(100.0),
             quantity: crate::types::Decimal::from_f64(10.0),
             stop_price: crate::types::Decimal::NULL,

@@ -107,6 +107,7 @@ use mgep::types::*;
 fn make_mgep_order() -> NewOrderSingleCore {
     NewOrderSingleCore {
         order_id: 123456789,
+        client_order_id: 0,
         instrument_id: 42,
         side: Side::Buy as u8,
         order_type: OrderType::Limit as u8,
@@ -210,6 +211,7 @@ fn bench_decode_protobuf(c: &mut Criterion) {
 fn bench_encode_mgep_exec_report(c: &mut Criterion) {
     let report = ExecutionReportCore {
         order_id: 123456789,
+        client_order_id: 0,
         exec_id: 987654321,
         instrument_id: 42,
         side: Side::Buy as u8,
@@ -273,6 +275,7 @@ fn bench_encode_protobuf_exec_report(c: &mut Criterion) {
 fn bench_decode_mgep_exec_report(c: &mut Criterion) {
     let report = ExecutionReportCore {
         order_id: 123456789,
+        client_order_id: 0,
         exec_id: 987654321,
         instrument_id: 42,
         side: Side::Buy as u8,

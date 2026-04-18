@@ -13,7 +13,8 @@ message NewOrderSingle {
     @type 0x01
     "Submit a new order to the exchange."
 
-    order_id        id          required    "Exchange-assigned order ID"
+    order_id        id          required    "Exchange-assigned order ID (0 on submit, echoed back in ExecutionReport)"
+    client_order_id id          required    "Client-assigned unique order ID. Used for idempotent retry: re-sending the same (session, client_order_id) returns the original response rather than creating a duplicate order."
     instrument_id   instrument  required    "Target instrument"
     side            Side        required
     order_type      OrderType   required
@@ -24,7 +25,6 @@ message NewOrderSingle {
 
     optional {
         account         string      "Trading account"
-        client_order_id string      "Client-assigned unique order ID"
         client_tag      string      "Free-form client tag"
         max_show        qty         "Iceberg: visible quantity"
         expire_time     timestamp   "GTD: expiration time"
@@ -81,6 +81,7 @@ message ExecutionReport {
     "Acknowledges order actions: new, fill, cancel, reject."
 
     order_id        id          required
+    client_order_id id          required    "Echoes NewOrderSingle.client_order_id; 0 for server-initiated reports"
     exec_id         id          required    "Unique execution ID"
     instrument_id   instrument  required
     side            Side        required
@@ -135,6 +136,7 @@ message OrderCancelReject {
     "Cancel or replace was rejected."
 
     order_id        id          required
+    client_order_id id          required    "Echoes ClOrdID of the rejected request; 0 if reject for mass/unknown"
     cancel_id       id          required
     reason          CancelRejectReason required
 

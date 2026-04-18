@@ -7,6 +7,7 @@ use mgep::types::*;
 fn make_order() -> NewOrderSingleCore {
     NewOrderSingleCore {
         order_id: 123456789,
+        client_order_id: 0,
         instrument_id: 42,
         side: Side::Buy as u8,
         order_type: OrderType::Limit as u8,
@@ -116,6 +117,7 @@ fn bench_decode_flex_field(c: &mut Criterion) {
 fn bench_execution_report_decode(c: &mut Criterion) {
     let report = ExecutionReportCore {
         order_id: 123456789,
+        client_order_id: 0,
         exec_id: 987654321,
         instrument_id: 42,
         side: Side::Buy as u8,
@@ -131,15 +133,17 @@ fn bench_execution_report_decode(c: &mut Criterion) {
         transact_time: Timestamp::now(),
     };
 
-    // Build a raw message buffer for ExecutionReport
-    let total = 24 + ExecutionReportCore::SIZE;
+    // Build a raw message buffer for ExecutionReport.
+    // Layout matches codec::MessageBuffer::encode: 32-byte FullHeader + core.
+    let total = 32 + ExecutionReportCore::SIZE;
     let mut msg = vec![0u8; total];
-    msg[..4].copy_from_slice(&(total as u32).to_le_bytes());
-    msg[4..6].copy_from_slice(&0x0001u16.to_le_bytes());
-    msg[6] = 1; // version
-    msg[7] = 0; // flags
-    msg[8..10].copy_from_slice(&0x0005u16.to_le_bytes()); // message_type
-    msg[24..24 + ExecutionReportCore::SIZE].copy_from_slice(report.as_bytes());
+    msg[0..2].copy_from_slice(&0x474Du16.to_le_bytes()); // magic "MG"
+    msg[2] = 0; // flags
+    msg[3] = 1; // version
+    msg[4..8].copy_from_slice(&(total as u32).to_le_bytes()); // message_size
+    msg[8..10].copy_from_slice(&0x0001u16.to_le_bytes()); // schema_id
+    msg[10..12].copy_from_slice(&0x0005u16.to_le_bytes()); // message_type
+    msg[32..32 + ExecutionReportCore::SIZE].copy_from_slice(report.as_bytes());
 
     c.bench_function("decode_execution_report", |b| {
         b.iter(|| {
@@ -202,13 +206,14 @@ fn bench_session_heartbeat(c: &mut Criterion) {
     session.handle_negotiate_response(&resp).unwrap();
     session.build_establish(&mut buf, [0u8; 32]).unwrap();
     let ack = mgep::session::EstablishAckCore {
-        session_id: 1, next_seq_num: 100, _pad: 0,
+        session_id: 1, next_seq_num: 100,
+        journal_low_seq_num: 0,
     };
     session.handle_establish_ack(&ack).unwrap();
 
     c.bench_function("build_heartbeat", |b| {
         b.iter(|| {
-            black_box(session.build_heartbeat(&mut buf));
+            let _ = black_box(session.build_heartbeat(&mut buf));
         });
     });
 }

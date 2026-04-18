@@ -63,6 +63,7 @@ fn full_exchange_flow() {
                     // Order resting — send New ack
                     let ack = ExecutionReportCore {
                         order_id: order.order_id,
+                        client_order_id: 1001,
                         exec_id: 0,
                         instrument_id: order.instrument_id,
                         side: order.side,
@@ -113,13 +114,14 @@ fn full_exchange_flow() {
     let mut client1 = Connection::connect(addr, client1_config).unwrap();
     assert_eq!(client1.state(), mgep::connection::ConnectionState::Active);
 
-    // Post 10 bid/ask pairs
+    // Post 10 bid/ask pairs (unique ClOrdID per order for idempotency).
     let mut enc = MessageBuffer::with_capacity(512);
     for i in 0..10u64 {
         // Bid
         enc.reset();
         let seq = client1.session_mut().next_seq();
         OrderBuilder::new(100 + i, 42)
+            .client_order_id(1000 + i * 2)
             .buy().limit(99.0 - i as f64).quantity(10.0)
             .account("MM001")
             .build(&mut enc, seq);
@@ -129,6 +131,7 @@ fn full_exchange_flow() {
         enc.reset();
         let seq = client1.session_mut().next_seq();
         OrderBuilder::new(200 + i, 42)
+            .client_order_id(1000 + i * 2 + 1)
             .sell().limit(101.0 + i as f64).quantity(10.0)
             .account("MM001")
             .build(&mut enc, seq);
@@ -151,6 +154,7 @@ fn full_exchange_flow() {
         enc.reset();
         let seq = client2.session_mut().next_seq();
         OrderBuilder::new(300 + i, 42)
+            .client_order_id(2000 + i)
             .buy().limit(110.0).quantity(10.0) // aggressive price
             .account("AGG001")
             .build(&mut enc, seq);
@@ -232,6 +236,9 @@ fn multiple_clients_concurrent() {
                 let seq = conn.session_mut().next_seq();
                 let order = NewOrderSingleCore {
                     order_id: client_idx * 1000 + i,
+                    // Vary ClOrdID per iteration so the idempotency gate
+                    // doesn't dedup every submission.
+                    client_order_id: client_idx * 100_000 + i + 1,
                     instrument_id: 42,
                     side: if i % 2 == 0 { 1 } else { 2 },
                     order_type: 2,

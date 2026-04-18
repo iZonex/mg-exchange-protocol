@@ -174,3 +174,66 @@ message SecurityListResponse {
         text            string
     }
 }
+
+# ── Book Snapshot / Recovery ─────────────────────────────
+# Used by clients to recover from multicast gaps larger than the
+# retransmit journal can cover, or on initial subscription.
+#
+# Protocol: BookSnapshotRequest (client → server, TCP recovery channel)
+#          → BookSnapshotBegin (declares instrument, last_applied_seq, level_count)
+#          → BookSnapshotLevel × N (one per aggregated price level)
+#          → BookSnapshotEnd (CRC32 over all level payloads, final_seq)
+#
+# Client stitching: apply snapshot, then replay buffered real-time updates
+# with seq > last_applied_seq. All real-time updates with seq <= last_applied_seq
+# are discarded — snapshot supersedes them.
+
+message BookSnapshotRequest {
+    @type 0x30
+    "Request a full-book snapshot for recovery."
+
+    request_id      id          required
+    instrument_id   instrument  required
+    max_levels      count                   "0 = full book, N = top N levels per side"
+}
+
+message BookSnapshotBegin {
+    @type 0x31
+    "Start of a snapshot stream. Declares the snapshot boundary."
+
+    request_id      id          required
+    instrument_id   instrument  required
+    last_applied_seq u64        required    "Market data seq this snapshot is consistent with"
+    level_count     count       required    "Total BookSnapshotLevel messages that will follow"
+    snapshot_id     id          required    "Unique per snapshot session; echoed in Level/End"
+}
+
+message BookSnapshotLevel {
+    @type 0x32
+    "One price level inside a snapshot. Multiple per snapshot."
+
+    snapshot_id     id          required
+    level_index     count       required    "Monotonic 0..level_count-1; detects drops"
+    side            Side        required
+    price           price       required
+    quantity        qty         required    "Aggregate quantity at this price"
+    order_count     count       required    "Number of resting orders at this price"
+}
+
+message BookSnapshotEnd {
+    @type 0x33
+    "End of snapshot stream. Client validates CRC before applying."
+
+    snapshot_id     id          required
+    final_seq       u64         required    "Must equal last_applied_seq from Begin"
+    checksum        u64         required    "CRC32 over concatenated Level payloads in order"
+    level_count     count       required    "Echoes Begin.level_count for paranoia"
+}
+
+message BookSnapshotReject {
+    @type 0x34
+    "Server refuses snapshot (unknown instrument, rate-limited, etc.)."
+
+    request_id      id          required
+    reason_code     u8          required    "1=UnknownInstrument 2=RateLimited 3=Unavailable 4=TooLarge"
+}

@@ -127,7 +127,7 @@ fn clock_gettime_realtime_ns() -> u64 {
 }
 
 /// Side of an order.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 #[repr(u8)]
 pub enum Side {
     Buy = 1,

@@ -129,7 +129,7 @@ impl Node {
             }
             if *vote_granted {
                 self.votes_received += 1;
-                let majority = (self.peers.len() as u32 + 1) / 2 + 1;
+                let majority = (self.peers.len() as u32).div_ceil(2) + 1;
                 if self.votes_received >= majority {
                     self.become_leader();
                 }

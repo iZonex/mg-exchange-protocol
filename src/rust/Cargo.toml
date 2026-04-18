@@ -1,9 +1,21 @@
 [package]
 name = "mgep"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "MG Exchange Protocol - ultra-low-latency trading protocol"
 license = "Apache-2.0"
+
+[features]
+default = ["experimental-transports"]
+# Opt in to the not-yet-production-grade transports: the SPSC shared-memory
+# ring and the RFC 6455 WebSocket binary adapter. Deployments that want a
+# minimal attack surface should build with `--no-default-features` and
+# re-enable only the stable transports they actually use.
+experimental-transports = []
+# Linux-native PTP / NTP clock-discipline probe via `clock_adjtime` +
+# /sys/class/ptp scan. Linux-only; off by default so cross-platform CI
+# still builds cleanly.
+linux-ptp = []
 
 [dependencies]
 

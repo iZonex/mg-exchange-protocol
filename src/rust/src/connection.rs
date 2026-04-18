@@ -41,6 +41,11 @@ pub struct ConnectionConfig {
     pub max_reconnect_attempts: u32,
     /// Sender component ID.
     pub sender_comp_id: u32,
+    /// `SessionFlags` bitmap requested at Negotiate (e.g.
+    /// `CANCEL_ON_DISCONNECT`). The server is authoritative — it may
+    /// filter flags it will not honor; the accepted set is available via
+    /// `conn.session().negotiated_flags()` once `Active`.
+    pub session_flags: u8,
 }
 
 impl Default for ConnectionConfig {
@@ -55,6 +60,7 @@ impl Default for ConnectionConfig {
             reconnect_multiplier: 2.0,
             max_reconnect_attempts: 0,
             sender_comp_id: 1,
+            session_flags: 0,
         }
     }
 }
@@ -100,6 +106,7 @@ impl Connection {
 
         conn.session.set_security_level(conn.config.security_level);
         conn.session.set_keepalive_ms(conn.config.keepalive_ms);
+        conn.session.request_flags(conn.config.session_flags);
 
         conn.do_connect()?;
         Ok(conn)
@@ -218,7 +225,7 @@ impl Connection {
         let now = Timestamp::now();
         if self.session.needs_heartbeat(now) {
             let len = self.session.build_heartbeat(&mut self.buf)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| io::Error::other(e.to_string()))?;
             if let Some(transport) = self.transport.as_mut() {
                 transport.send(&self.buf[..len])?;
                 transport.flush()?;
@@ -231,14 +238,12 @@ impl Connection {
 
     /// Graceful disconnect.
     pub fn disconnect(&mut self) -> Result<(), io::Error> {
-        if self.state == ConnectionState::Active {
-            if let Ok(len) = self.session.build_terminate(&mut self.buf, 0) {
-                if let Some(transport) = self.transport.as_mut() {
+        if self.state == ConnectionState::Active
+            && let Ok(len) = self.session.build_terminate(&mut self.buf, 0)
+                && let Some(transport) = self.transport.as_mut() {
                     let _ = transport.send(&self.buf[..len]);
                     let _ = transport.flush();
                 }
-            }
-        }
         self.transport = None;
         self.state = ConnectionState::Disconnected;
         Ok(())
@@ -300,7 +305,7 @@ impl Connection {
 
         // Step 1: Negotiate
         let len = self.session.build_negotiate(&mut self.buf, [0u8; 32])
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
         transport.send(&self.buf[..len])?;
         transport.flush()?;
 
@@ -331,7 +336,7 @@ impl Connection {
         };
 
         let len = self.session.build_establish(&mut self.buf, credentials)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
         transport.send(&self.buf[..len])?;
         transport.flush()?;
 
@@ -348,7 +353,7 @@ impl Connection {
         }
         let ack = EstablishAckCore::from_bytes(&msg[CORE_BLOCK_OFFSET..]);
         self.session.handle_establish_ack(ack)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
 
         Ok(())
     }
@@ -439,6 +444,7 @@ mod tests {
         // Send an order
         let order = crate::messages::NewOrderSingleCore {
             order_id: 42, instrument_id: 7, side: 1, order_type: 2,
+            client_order_id: 0,
             time_in_force: 1, price: crate::types::Decimal::from_f64(100.0),
             quantity: crate::types::Decimal::from_f64(10.0),
             stop_price: crate::types::Decimal::NULL,
@@ -471,7 +477,7 @@ mod tests {
         };
         session.handle_negotiate_response(&resp).unwrap();
         session.build_establish(&mut buf, [0u8; 32]).unwrap();
-        let ack = EstablishAckCore { session_id: 42, next_seq_num: 1, _pad: 0 };
+        let ack = EstablishAckCore { session_id: 42, next_seq_num: 1, journal_low_seq_num: 0 };
         session.handle_establish_ack(&ack).unwrap();
 
         // Record outbound seq and journal

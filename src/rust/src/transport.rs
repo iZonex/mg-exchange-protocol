@@ -211,6 +211,7 @@ mod tests {
         // Client sends a NewOrder
         let order = NewOrderSingleCore {
             order_id: 42,
+            client_order_id: 0,
             instrument_id: 1,
             side: Side::Buy as u8,
             order_type: OrderType::Limit as u8,
@@ -246,6 +247,7 @@ mod tests {
         for i in 0..100u64 {
             let order = NewOrderSingleCore {
                 order_id: i,
+                client_order_id: 0,
                 instrument_id: 1,
                 side: Side::Buy as u8,
                 order_type: OrderType::Limit as u8,
@@ -279,6 +281,7 @@ mod tests {
         // Encode directly into transport's write buffer
         let order = NewOrderSingleCore {
             order_id: 999,
+            client_order_id: 0,
             instrument_id: 7,
             side: Side::Sell as u8,
             order_type: OrderType::Market as u8,
@@ -291,13 +294,14 @@ mod tests {
         // Build message directly into the transport buffer
         let buf = client.write_buffer();
         // Write directly into the transport buffer
+        let total = (32 + NewOrderSingleCore::SIZE) as u32;
         let header = crate::header::FullHeader::new(
-            0x0001, 0x01, 1, 1, 0, 72, crate::frame::FrameFlags::NONE,
+            0x0001, 0x01, 1, 1, 0, total, crate::frame::FrameFlags::NONE,
         );
         header.write_to(buf);
         buf[32..32 + NewOrderSingleCore::SIZE].copy_from_slice(order.as_bytes());
 
-        client.send_buffered(72).unwrap();
+        client.send_buffered(total as usize).unwrap();
         client.flush().unwrap();
 
         let msg = server_conn.recv().unwrap().unwrap();

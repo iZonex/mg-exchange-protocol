@@ -38,17 +38,19 @@ Every MGEP message has this structure:
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                        Frame Header (8 bytes)                  |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                      Message Header (16 bytes)                 |
+|                      Message Header (24 bytes)                 |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                      Core Block (fixed layout)                 |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                      Flex Block (indexed fields)               |
+|                      Flex Block (indexed fields, capped at 32) |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                      Auth Tag (16 bytes, optional)             |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-Total minimum message size: **24 bytes** (header only, no body, no auth)
+Combined header (frame + message): **32 bytes** — exactly half a cache line.
+Minimum message size is therefore **32 bytes**; messages shorter than this
+MUST be rejected as malformed.
 
 ---
 
@@ -60,42 +62,56 @@ processable by hardware (FPGA/SmartNIC) without understanding message content.
 ```
 Offset  Size  Field           Description
 ------  ----  -----           -----------
-0       4     message_size    Total message size in bytes (including this header)
-4       2     schema_id       Schema identifier (message type family)
-6       1     version         Schema version (0-255)
-7       1     flags           Bit flags:
-                                bit 0: has_auth_tag (1 = 16-byte auth tag appended)
-                                bit 1: encrypted (1 = core+flex blocks are encrypted)
-                                bit 2: compressed (1 = flex block is LZ4-compressed)
-                                bit 3: has_flex (1 = flex block present)
-                                bit 4-7: reserved
+0       2     magic           0x474D ("MG" in little-endian). MUST match.
+2       1     flags           Bit flags (see below)
+3       1     version         Wire protocol version. Current: 1.
+4       4     message_size    Total message size in bytes (incl. frame header,
+                              optional CRC32 trailer NOT counted)
+```
+
+### Flags byte
+
+```
+bit 0: has_auth_tag   — 1 = HMAC-SHA256 16-byte tag appended
+bit 1: encrypted      — 1 = core + flex blocks are AES-128-GCM encrypted
+bit 2: compressed     — 1 = flex block is LZ4-compressed
+bit 3: has_flex       — 1 = flex block present (otherwise core-only)
+bit 4: has_crc        — 1 = CRC32 trailer appended (4 bytes after body)
+bit 5: has_replication — 1 = replication header follows frame (HA deployments)
+bit 6-7: reserved
 ```
 
 ### Design Rationale
-- `message_size` at offset 0: hardware/FPGA can frame messages without any parsing
-- `schema_id` + `version`: decoder selects the right schema before touching the body
+- `magic` at offset 0: hardware/FPGA instant framing without parsing state
+- `version` at offset 3: decoder rejects unknown wire versions before touching body
+- `message_size` as u32 at offset 4: unambiguous body length for fragmentation-aware transports
 - `flags` byte: single branch to determine processing path
 
 ---
 
-## 5. Message Header (16 bytes)
+## 5. Message Header (24 bytes)
 
-Application-level header present in every message.
+Application-level header present in every message. Follows the frame header
+at offset 8.
 
 ```
-Offset  Size  Field           Description
-------  ----  -----           -----------
-8       2     message_type    Message type within schema (e.g., NewOrder=1, Cancel=2)
-10      2     sender_comp_id  Sender component ID (0-65535)
-12      4     sequence_num    Message sequence number
-16      8     timestamp       Nanoseconds since Unix epoch (good until year 2554)
+Offset  Size  Type  Field             Description
+------  ----  ----  -----             -----------
+8       2     u16   schema_id         Schema identifier (0x0000 session, 0x0001 trading, 0x0002 market_data, …)
+10      2     u16   message_type      Type within schema (e.g. NewOrder=0x01)
+12      4     u32   sender_comp_id    Sender component ID
+16      8     u64   sequence_num      Monotonic message sequence number
+24      8     u64   correlation_id    Request/response linkage (0 = none)
 ```
 
 ### Design Rationale
-- `message_type` at fixed offset 8: single lookup to dispatch handler
-- `sequence_num` at fixed offset 12: gap detection without parsing body
-- `timestamp` as 8-byte nanos: no floating point, no struct, single integer comparison
-- Total header: 24 bytes. Fits in a single cache line with small core blocks.
+- `schema_id + message_type` packed at offset 8: 4-byte dispatch key, one load
+- `sequence_num` as u64 at offset 16: no practical wraparound, gap detection without body access
+- `correlation_id` at offset 24: echoed by server onto handler responses so clients can match
+  responses to in-flight requests (see [`correlation.rs`](../../src/rust/src/correlation.rs))
+- **No wire-level `timestamp` field** — MGEP timestamps are per-message in the core block
+  (e.g. `ExecutionReport.transact_time`). Clock discipline governs these per [§6](06-clock-discipline.md)
+- Total combined header: 32 bytes. Fits in half a cache line.
 
 ---
 
@@ -112,21 +128,32 @@ Each message type defines its own core block layout with fixed field offsets.
 
 ### Example: NewOrderSingle Core Block
 
+Core block begins at offset 32 (immediately after the 32-byte combined
+header).
+
 ```
-Offset  Size  Type     Field           Description
-------  ----  ----     -----           -----------
-24      8     u64      order_id        Client order ID
-32      4     u32      instrument_id   Instrument numeric ID
-36      1     u8       side            1=Buy, 2=Sell
-37      1     u8       order_type      1=Market, 2=Limit, 3=Stop, 4=StopLimit
-38      2     u16      time_in_force   1=Day, 2=GTC, 3=IOC, 4=FOK, 5=GTD
-40      8     i64      price           Price * 10^8 (fixed-point, 8 decimal places)
-48      8     i64      quantity         Quantity * 10^8 (fractional shares/contracts)
-56      8     i64      stop_price      Stop price * 10^8 (NULL_I64 if not applicable)
+Offset  Size  Type  Field             Description
+------  ----  ----  -----             -----------
+32      8     u64   order_id          Exchange-assigned order ID (0 on submit,
+                                      echoed back in ExecutionReport)
+40      8     u64   client_order_id   Client-assigned unique ID. REQUIRED,
+                                      MUST be non-zero. Used for idempotent
+                                      retry — see §6 Order Reliability.
+48      4     u32   instrument_id     Instrument numeric ID
+52      1     u8    side              1=Buy, 2=Sell
+53      1     u8    order_type        1=Market, 2=Limit, 3=Stop, 4=StopLimit
+54      2     u16   time_in_force     1=Day, 2=GTC, 3=IOC, 4=FOK, 5=GTD
+56      8     i64   price             Price × 10⁸ fixed-point (DECIMAL_NULL = i64::MIN)
+64      8     i64   quantity          Quantity × 10⁸ (fractional shares/contracts OK)
+72      8     i64   stop_price        Stop price × 10⁸ (DECIMAL_NULL if not applicable)
 ```
 
-**Core block size for NewOrderSingle: 40 bytes**
-**Total with headers: 64 bytes** (vs 200-400 bytes for FIX text equivalent)
+**Core block size for NewOrderSingle: 48 bytes**
+**Total with headers (no flex, no auth): 80 bytes** (vs 200-400 bytes for FIX text equivalent)
+
+Note: size grew from 40B in v0.1.0 to 48B in v0.2.0 with the addition of the
+required `client_order_id` field for server-side idempotent retry. See
+`CHANGELOG.md` `[0.2.0]` and `VERSIONING.md` Pre-1.0 Exception.
 
 ### Price Representation
 Prices use **fixed-point i64 with 10^8 scaling factor** (8 decimal places).
@@ -190,10 +217,10 @@ Type Tag  Type          Size
 - Flex fields are NOT on the hot path — they carry supplementary data
 
 ### Schema Evolution Rules
-1. Core block fields are NEVER removed or reordered (append-only for core)
+1. **Post-1.0:** Core block fields are NEVER removed or reordered (append-only for core). Pre-1.0, per `VERSIONING.md` Pre-1.0 Exception, core-block changes are allowed but MUST be documented in `CHANGELOG.md`.
 2. Flex fields can be added in any schema version
 3. Flex fields can be deprecated (decoders ignore unknown field_ids)
-4. A field can be promoted from flex to core in a new major version
+4. A field can be promoted from flex to core in a new major version (post-1.0) or a minor version (pre-1.0)
 
 ---
 
@@ -304,9 +331,9 @@ This matches SBE's approach and allows zero-cost null checks
 | FIX 4.2 text | 250-400 | Tag-value ASCII |
 | Protobuf | 60-90 | Varint encoding |
 | SBE | 50-70 | Fixed layout |
-| **MGEP** | **64** | 24 header + 40 core |
-| **MGEP + auth** | **80** | + 16 byte auth tag |
-| ITCH Add Order | 36 | No auth, no session |
+| **MGEP** | **80** | 32 header + 48 core |
+| **MGEP + auth** | **96** | + 16-byte auth tag |
+| ITCH Add Order | 36 | No auth, no session, no idempotency |
 | OUCH Enter Order | 47-49 | No auth |
 
 ### Expected Encode/Decode Performance
@@ -362,8 +389,8 @@ This matches SBE's approach and allows zero-cost null checks
 | Byte order | Little-endian | Big-endian (network order) | 99%+ of trading hardware is x86/ARM-LE |
 | Price encoding | Fixed-point i64 * 10^8 | Decimal128, f64, BCD | Integer math, no FP errors, 8 decimals covers all assets |
 | Null values | Sentinel values | Presence bitmap, Optional wrapper | Single comparison vs bitmap lookup + branch |
-| Header size | 24 bytes (8 frame + 16 msg) | 16 bytes, 32 bytes | Fits in cache line, enough for dispatch+sequence+time |
-| Flex block | Field index + data area | SBE-style groups, Protobuf-style varint | Sorted index enables binary search, schema evolution |
-| Auth tag | 16 bytes (128-bit) | 32 bytes (256-bit), variable | 128-bit is standard security level, fixed size = predictable |
-| Sequence numbers | 32-bit | 64-bit | 4B messages sufficient per session, saves 4 bytes/msg |
-| Timestamp | Nanos since epoch (u64) | Micros, millis, struct | Nanos for precision, u64 for simplicity, good until 2554 |
+| Header size | 32 bytes (8 frame + 24 msg) | 16 bytes, 32 bytes | Half a cache line, carries dispatch + seq + correlation_id |
+| Flex block | Field index + data area, capped at 32 fields | SBE-style groups, Protobuf-style varint | Sorted index enables binary search; cap bounds worst-case lookup |
+| Auth tag | 16 bytes (128-bit) | 32 bytes (256-bit), variable | 128-bit is standard; fixed size = predictable; layered HMAC also available |
+| Sequence numbers | 64-bit | 32-bit, 64-bit | No practical wraparound |
+| Timestamp | u64 nanos per message body | Implicit from session, struct | PTP-discipline gate decides regulatory acceptability (see §6) |

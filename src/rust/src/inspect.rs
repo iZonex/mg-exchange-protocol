@@ -43,20 +43,20 @@ pub fn format_message(buf: &[u8]) -> String {
 
     match dispatch_message(buf) {
         MessageKind::NewOrder(o) => {
-            write!(out, "[NewOrderSingle] schema=0x{:04X} type=0x{:02X} seq={} size={}B{}\n",
+            writeln!(out, "[NewOrderSingle] schema=0x{:04X} type=0x{:02X} seq={} size={}B{}",
                 schema, msg_type, seq, size, flags_str).unwrap();
-            write!(out, "  order_id={} instrument={} side={} type={} tif={}\n",
+            writeln!(out, "  order_id={} instrument={} side={} type={} tif={}",
                 o.order_id, o.instrument_id,
                 side_str(o.side), order_type_str(o.order_type), tif_str(o.time_in_force)).unwrap();
             write!(out, "  price={} qty={} stop={}", o.price, o.quantity, o.stop_price).unwrap();
             append_flex(&mut out, buf, NewOrderSingleCore::SIZE, &[(1, "account"), (2, "client_tag")]);
         }
         MessageKind::ExecutionReport(r) => {
-            write!(out, "[ExecutionReport] schema=0x{:04X} type=0x{:02X} seq={} size={}B{}\n",
+            writeln!(out, "[ExecutionReport] schema=0x{:04X} type=0x{:02X} seq={} size={}B{}",
                 schema, msg_type, seq, size, flags_str).unwrap();
-            write!(out, "  order_id={} exec_id={} instrument={} side={}\n",
+            writeln!(out, "  order_id={} exec_id={} instrument={} side={}",
                 r.order_id, r.exec_id, r.instrument_id, side_str(r.side)).unwrap();
-            write!(out, "  exec_type={} price={} qty={} leaves={} cum={}\n",
+            writeln!(out, "  exec_type={} price={} qty={} leaves={} cum={}",
                 exec_type_str(r.exec_type), r.price, r.quantity, r.leaves_qty, r.cum_qty).unwrap();
             write!(out, "  last_px={} last_qty={}", r.last_px, r.last_qty).unwrap();
             append_flex(&mut out, buf, ExecutionReportCore::SIZE, &[(1, "text"), (4, "fee_currency")]);
@@ -186,6 +186,7 @@ mod tests {
         let mut enc = MessageBuffer::with_capacity(256);
         let order = NewOrderSingleCore {
             order_id: 1000, instrument_id: 42, side: 1, order_type: 2,
+            client_order_id: 0,
             time_in_force: 1, price: Decimal::from_f64(150.25),
             quantity: Decimal::from_f64(100.0), stop_price: Decimal::NULL,
         };
@@ -210,6 +211,7 @@ mod tests {
         let mut enc = MessageBuffer::with_capacity(512);
         let order = NewOrderSingleCore {
             order_id: 42, instrument_id: 7, side: 1, order_type: 2,
+            client_order_id: 0,
             time_in_force: 3, price: Decimal::from_f64(100.0),
             quantity: Decimal::from_f64(10.0), stop_price: Decimal::NULL,
         };

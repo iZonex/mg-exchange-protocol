@@ -1,0 +1,20 @@
+{
+  "name": "@mgep/bindings",
+  "version": "0.1.0",
+  "description": "MGEP protocol bindings for TypeScript / JavaScript (Node, Deno, Bun, browsers).",
+  "type": "module",
+  "main": "src/mgep.ts",
+  "types": "src/mgep.ts",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test:deno": "deno test --allow-read test/mgep.test.ts",
+    "test:bun": "bun test/mgep.test.ts",
+    "test:node": "node --experimental-strip-types test/mgep.test.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/mgep.ts",
+      "import": "./src/mgep.ts"
+    }
+  }
+}

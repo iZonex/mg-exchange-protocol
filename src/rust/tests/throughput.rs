@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 fn throughput_encode_decode() {
     let order = NewOrderSingleCore {
         order_id: 1, instrument_id: 42, side: 1, order_type: 2,
+        client_order_id: 0,
         time_in_force: 1, price: Decimal::from_f64(150.25),
         quantity: Decimal::from_f64(100.0), stop_price: Decimal::NULL,
     };
@@ -88,15 +89,18 @@ fn throughput_tcp_roundtrip() {
     let mut conn = Connection::connect(addr, config).unwrap();
 
     let count = 100_000u64;
-    let order = NewOrderSingleCore {
-        order_id: 1, instrument_id: 42, side: 1, order_type: 2,
-        time_in_force: 1, price: Decimal::from_f64(150.25),
-        quantity: Decimal::from_f64(100.0), stop_price: Decimal::NULL,
-    };
     let mut enc = MessageBuffer::with_capacity(256);
 
     let start = Instant::now();
     for i in 0..count {
+        // Unique ClOrdID per iteration; server's idempotency store would
+        // otherwise dedup every submission and the assertion would fail.
+        let order = NewOrderSingleCore {
+            order_id: i + 1, instrument_id: 42, side: 1, order_type: 2,
+            client_order_id: i + 1,
+            time_in_force: 1, price: Decimal::from_f64(150.25),
+            quantity: Decimal::from_f64(100.0), stop_price: Decimal::NULL,
+        };
         enc.reset();
         let seq = conn.session_mut().next_seq();
         enc.encode(1, seq, &order, None);
@@ -141,6 +145,7 @@ fn throughput_orderbook() {
     for i in 0..count {
         let order = NewOrderSingleCore {
             order_id: i,
+            client_order_id: 0,
             instrument_id: 1,
             side: if i % 2 == 0 { 1 } else { 2 },
             order_type: OrderType::Limit as u8,
